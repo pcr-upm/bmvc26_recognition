@@ -10,11 +10,14 @@ import cv2
 import json
 import h5py
 import numpy as np
+import pandas as pd
 import importlib.util
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from sklearn.metrics import accuracy_score
+from src.shapes3d import Dataset
+from src.evaluate import eval_func
 np.random.seed(42)
 
 
@@ -232,6 +235,13 @@ def main():
 
             results['results'][factor_name][str(slot_index)] = {'train_accuracy': float(train_acc), 'test_accuracy': float(test_acc)}
 
+    print('=' * 80)
+    table_data = {name: [results['results'][name][str(slot)]['test_accuracy'] for slot in range(num_slots)] for name in factor_names}
+    df_test = pd.DataFrame(table_data, index=[f'Slot {i}' for i in range(num_slots)])
+    df_test.columns = ['Flo', 'Wal', 'Obj', 'Scl', 'Shp', 'Ori']
+    df_test = df_test.mul(100).round(2)
+    print(df_test)
+
     spec = importlib.util.find_spec('pcr_framework')
     output_path = os.path.join('pcr_framework' if spec is None else os.path.dirname(spec.origin), 'output')
     Path(output_path).mkdir(parents=True, exist_ok=True)
@@ -241,49 +251,20 @@ def main():
         json.dump(results, f, indent=2)
     print(f'\nAll results saved to: {output_json}')
 
-    print("=" * 80)
-    print("DisDiff metric evaluation from .npz")
-    print("=" * 80)
-    print(f"NPZ:     {args.npz}")
-    print(f"Outdir:  {output_path}")
-    print(f"Dataset: {'shapes3d'}")
-    print(f"Seed:    {42}")
-    print("=" * 80)
+    print('=' * 80)
+    print('[1/3] Loading latents...')
+    print(f'Loaded latents shape: {tuple(all_latents.shape)}')
+    print(f'Output id / num_samples: {num_samples}')
+    print('[2/3] Loading ground-truth dataset...')
+    label_dataset = Dataset(np.arange(0, 480000))
+    print('[3/3] Computing metrics...')
+    results = eval_func(eval_dataset=label_dataset, data_tensor=all_latents, metric_folder=output_path, it=num_samples, seed=42)
+    print('=' * 80)
 
-    print("[1/3] Loading latents...")
-    latents, num_samples = load_latents_npz(args.npz)
-
-    print(f"Loaded latents shape: {tuple(latents.shape)}")
-    print(f"Output id / num_samples: {num_samples}")
-
-    expected_json = os.path.join(output_path, f"{num_samples}.json")
-
-    if os.path.exists(expected_json) and not conf.overwrite:
-        print()
-        print(f"[SKIP] Output JSON already exists: {expected_json}")
-        print("Use --overwrite to recompute it.")
-        return 0
-
-    print("[2/3] Loading ground-truth dataset...")
-    label_dataset = make_dis_dataset('shapes3d')
-
-    if not conf.no_metadata:
-        metadata_path = maybe_write_run_metadata(outdir=output_path, npz_path=args.npz, dataset='shapes3d', seed=42, latents=latents, num_samples=num_samples)
-        print(f"Run metadata written to: {metadata_path}")
-
-    print("[3/3] Computing metrics...")
-    results = eval_func(eval_dataset=label_dataset, data_tensor=latents, metric_folder=output_path, it=num_samples, seed=42, preflix=conf.prefix)
-
-    print()
-    print("=" * 80)
-    print("Finished.")
-    print(f"Metric JSON written to: {expected_json}")
-    print("=" * 80)
-
-    if "factor_VAE" + conf.prefix in results:
-        fv = results["factor_VAE" + conf.prefix]
+    if 'factor_VAE' in results:
+        fv = results['factor_VAE']
         if isinstance(fv, dict):
-            print("FactorVAE summary:")
+            print('FactorVAE summary:')
             print(f"  train_accuracy: {fv.get('train_accuracy')}")
             print(f"  eval_accuracy:  {fv.get('eval_accuracy')}")
             print(f"  num_active_dims: {fv.get('num_active_dims')}")
