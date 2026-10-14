@@ -9,6 +9,7 @@ sys.path.append(os.getcwd())
 import cv2
 import json
 import h5py
+import torch
 import numpy as np
 import pandas as pd
 import importlib.util
@@ -16,7 +17,7 @@ from pathlib import Path
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from sklearn.metrics import accuracy_score
-from src.shapes3d import Dataset
+from ground_truth.shapes3d import Dataset
 from src.evaluate import eval_func
 np.random.seed(42)
 
@@ -252,22 +253,22 @@ def main():
     print(f'\nAll results saved to: {output_json}')
 
     print('=' * 80)
-    print('[1/3] Loading latents...')
-    print(f'Loaded latents shape: {tuple(all_latents.shape)}')
-    print(f'Output id / num_samples: {num_samples}')
-    print('[2/3] Loading ground-truth dataset...')
     label_dataset = Dataset(np.arange(0, 480000))
-    print('[3/3] Computing metrics...')
-    results = eval_func(eval_dataset=label_dataset, data_tensor=all_latents, metric_folder=output_path, it=num_samples, seed=42)
+    print('Computing metrics...')
+    latents = torch.from_numpy(all_latents).float()
+    results = eval_func(eval_dataset=label_dataset, data_tensor=latents, metric_folder=output_path, it=num_samples, seed=42)
     print('=' * 80)
 
     if 'factor_VAE' in results:
         fv = results['factor_VAE']
         if isinstance(fv, dict):
             print('FactorVAE summary:')
-            print(f"  train_accuracy: {fv.get('train_accuracy')}")
             print(f"  eval_accuracy:  {fv.get('eval_accuracy')}")
-            print(f"  num_active_dims: {fv.get('num_active_dims')}")
+    if 'dci score' in results:
+        dci = results['dci score']
+        if isinstance(dci, dict):
+            print('DCI summary:')
+            print(f"  disentanglement: {dci.get('disentanglement')}")
     print('End of bmvc26_recognition_latent')
 
 

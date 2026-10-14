@@ -1,12 +1,14 @@
-from sklearn.decomposition import PCA
-import numpy as np
-import torch
-import math
-import gin
-import os
-import json
+# Source: https://github.com/ThomasMrY/DisDiff
+# Original code adapted from the DisDiff repository by ThomasMrY.
 
-def write_text(result_dict,file):
+import torch
+import gin
+import json
+import numpy as np
+from sklearn.decomposition import PCA
+
+
+def write_text(result_dict, file):
     with open(file,'w+') as f:
         json.dump(result_dict,f)
 
@@ -31,7 +33,7 @@ def enc_func(test_loader, model, perceiver_enc):
     latents = torch.cat(latents_list, dim=0)
     return latents
 
-def eval_func(eval_dataset, data_tensor, metric_folder, it, seed=0, preflix="",):
+def eval_func(eval_dataset, data_tensor, metric_folder, it, seed=0, preflix=''):
 
     pca_list = []
     for i in range(data_tensor.shape[1]):
@@ -50,41 +52,41 @@ def eval_func(eval_dataset, data_tensor, metric_folder, it, seed=0, preflix="",)
     if beta_VAE_score:
         with gin.unlock_config():
             from evaluation.metrics.beta_vae import compute_beta_vae_sklearn
-            gin.bind_parameter("beta_vae_sklearn.batch_size", 64)
-            gin.bind_parameter("beta_vae_sklearn.num_train", 10000)
-            gin.bind_parameter("beta_vae_sklearn.num_eval", 5000)
+            gin.bind_parameter('beta_vae_sklearn.batch_size', 64)
+            gin.bind_parameter('beta_vae_sklearn.num_train', 10000)
+            gin.bind_parameter('beta_vae_sklearn.num_eval', 5000)
         result_dict = compute_beta_vae_sklearn(eval_dataset,_representation,random_state=np.random.RandomState(seed),artifact_dir=None)
-        print("beta VAE score:" + str(result_dict))
-        total_results_dict["beta_VAE" + preflix] = result_dict
+        print('beta VAE score:' + str(result_dict))
+        total_results_dict['beta_VAE' + preflix] = result_dict
     if dci_score:
         from evaluation.metrics.dci import compute_dci
         with gin.unlock_config():
-            gin.bind_parameter("dci.num_train", 10000)
-            gin.bind_parameter("dci.num_test", 5000)
+            gin.bind_parameter('dci.num_train',10000)
+            gin.bind_parameter('dci.num_test',5000)
         result_dict = compute_dci(eval_dataset,_representation,random_state=np.random.RandomState(seed),artifact_dir=None)
-        print("dci score:" + str(result_dict))
-        total_results_dict["dci" + preflix] = result_dict
+        print('dci score:' + str(result_dict))
+        total_results_dict['dci' + preflix] = result_dict
     if MIG_score:
         with gin.unlock_config():
             from evaluation.metrics.mig import compute_mig
             from evaluation.metrics.utils import _histogram_discretize
-            gin.bind_parameter("mig.num_train",10000)
-            gin.bind_parameter("discretizer.discretizer_fn",_histogram_discretize)
-            gin.bind_parameter("discretizer.num_bins",20)
+            gin.bind_parameter('mig.num_train',10000)
+            gin.bind_parameter('discretizer.discretizer_fn',_histogram_discretize)
+            gin.bind_parameter('discretizer.num_bins',20)
         result_dict = compute_mig(eval_dataset,_representation,random_state=np.random.RandomState(seed),artifact_dir=None)
-        print("MIG score:" + str(result_dict))
-        total_results_dict["MIG" + preflix] = result_dict
+        print('MIG score:' + str(result_dict))
+        total_results_dict['MIG' + preflix] = result_dict
     if factor_VAE_score:
         with gin.unlock_config():
             from evaluation.metrics.factor_vae import compute_factor_vae
-            gin.bind_parameter("factor_vae_score.num_variance_estimate",10000)
-            gin.bind_parameter("factor_vae_score.num_train",10000)
-            gin.bind_parameter("factor_vae_score.num_eval",5000)
-            gin.bind_parameter("factor_vae_score.batch_size",64)
-            gin.bind_parameter("prune_dims.threshold",0.05)
+            gin.bind_parameter('factor_vae_score.num_variance_estimate',10000)
+            gin.bind_parameter('factor_vae_score.num_train',10000)
+            gin.bind_parameter('factor_vae_score.num_eval',5000)
+            gin.bind_parameter('factor_vae_score.batch_size',64)
+            gin.bind_parameter('prune_dims.threshold',0.05)
         result_dict = compute_factor_vae(eval_dataset,_representation,random_state=np.random.RandomState(seed),artifact_dir=None)
-        print("factor VAE score:" + str(result_dict))
-        total_results_dict["factor_VAE" + preflix] = result_dict
+        print('factor VAE score:' + str(result_dict))
+        total_results_dict['factor_VAE' + preflix] = result_dict
         write_text(total_results_dict,metric_folder + f"/{it}.json")
     return total_results_dict
 
@@ -106,39 +108,40 @@ def eval_func_test(eval_dataset, data_list, metric_folder, it):
     if beta_VAE_score:
         with gin.unlock_config():
             from evaluation.metrics.beta_vae import compute_beta_vae_sklearn
-            gin.bind_parameter("beta_vae_sklearn.batch_size", 64)
-            gin.bind_parameter("beta_vae_sklearn.num_train", 10000)
-            gin.bind_parameter("beta_vae_sklearn.num_eval", 5000)
+            gin.bind_parameter('beta_vae_sklearn.batch_size', 64)
+            gin.bind_parameter('beta_vae_sklearn.num_train', 10000)
+            gin.bind_parameter('beta_vae_sklearn.num_eval', 5000)
         result_dict = compute_beta_vae_sklearn(eval_dataset,_representation,random_state=np.random.RandomState(0),artifact_dir=None)
-        print("beta VAE score:" + str(result_dict))
-        total_results_dict["beta_VAE_score"] = result_dict
+        print('beta VAE score:' + str(result_dict))
+        total_results_dict['beta_VAE_score'] = result_dict
     if dci_score:
         from evaluation.metrics.dci import compute_dci
         with gin.unlock_config():
-            gin.bind_parameter("dci.num_train", 10000)
-            gin.bind_parameter("dci.num_test", 5000)
+            gin.bind_parameter('dci.num_train', 10000)
+            gin.bind_parameter('dci.num_test', 5000)
         result_dict = compute_dci(eval_dataset,_representation,random_state=np.random.RandomState(0),artifact_dir=None)
-        print("dci score:" + str(result_dict))
-        total_results_dict["dci_score"] = result_dict
+        print('dci score:' + str(result_dict))
+        total_results_dict['dci_score'] = result_dict
     if MIG_score:
         with gin.unlock_config():
             from evaluation.metrics.mig import compute_mig
             from evaluation.metrics.utils import _histogram_discretize
-            gin.bind_parameter("mig.num_train",10000)
-            gin.bind_parameter("discretizer.discretizer_fn",_histogram_discretize)
-            gin.bind_parameter("discretizer.num_bins",20)
+            gin.bind_parameter('mig.num_train',10000)
+            gin.bind_parameter('discretizer.discretizer_fn',_histogram_discretize)
+            gin.bind_parameter('discretizer.num_bins',20)
         result_dict = compute_mig(eval_dataset,_representation,random_state=np.random.RandomState(0),artifact_dir=None)
-        print("MIG score:" + str(result_dict))
-        total_results_dict["MIG_score"] = result_dict
+        print('MIG score:' + str(result_dict))
+        total_results_dict['MIG_score'] = result_dict
     if factor_VAE_score:
         with gin.unlock_config():
             from evaluation.metrics.factor_vae import compute_factor_vae
-            gin.bind_parameter("factor_vae_score.num_variance_estimate",10000)
-            gin.bind_parameter("factor_vae_score.num_train",10000)
-            gin.bind_parameter("factor_vae_score.num_eval",5000)
-            gin.bind_parameter("factor_vae_score.batch_size",64)
-            gin.bind_parameter("prune_dims.threshold",0.05)
+            gin.bind_parameter('factor_vae_score.num_variance_estimate',10000)
+            gin.bind_parameter('factor_vae_score.num_train',10000)
+            gin.bind_parameter('factor_vae_score.num_eval',5000)
+            gin.bind_parameter('factor_vae_score.batch_size',64)
+            gin.bind_parameter('prune_dims.threshold',0.05)
         result_dict = compute_factor_vae(eval_dataset,_representation,random_state=np.random.RandomState(0),artifact_dir=None)
-        print("factor VAE score:" + str(result_dict))
-        total_results_dict["factor_VAE_score"] = result_dict
+        print('factor VAE score:' + str(result_dict))
+        total_results_dict['factor_VAE_score'] = result_dict
         write_text(total_results_dict,metric_folder + f"/{it}.json")
+    

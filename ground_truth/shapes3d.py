@@ -18,8 +18,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 import os
-from data.ground_truth import ground_truth_data
-from data.ground_truth import util
+from ground_truth import ground_truth_data
+from ground_truth import util
 import numpy as np
 from six.moves import range
 import h5py
