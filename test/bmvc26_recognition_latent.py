@@ -22,7 +22,8 @@ from src.evaluate import eval_func
 np.random.seed(42)
 
 
-FACTOR_NAMES = ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']
+# FACTOR_NAMES = ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']
+FACTOR_NAMES = ['Eyeglasses', 'Male', 'Wearing_Hat', 'Smiling', 'Mustache', 'Wearing_Earrings']
 
 
 def parse_options():
@@ -39,6 +40,10 @@ def parse_options():
                         help='Path to train indices .npy')
     parser.add_argument('--test_idx_path', type=str, default='/home/database/shapes3d/splits/test_fixed.npy',
                         help='Path to test indices .npy')
+    parser.add_argument('--attr_path', type=str, default='/home/database/celeba/list_attr_celeba.txt',
+                        help='Path to CelebA list_attr_celeba.txt')
+    parser.add_argument('--splits_dir', type=str, default='/home/database/celeba/splits_per_factor', 
+                        help='Directory containing balanced per-attribute CelebA splits')
     parser.add_argument('--latent_key', type=str, default=None,
                         help='Optional latent key inside the .npz file. If omitted, the script tries to infer it.')
     args, unknown = parser.parse_known_args()
@@ -121,47 +126,80 @@ def main():
     num_slots = all_latents.shape[1]
     input_dim = all_latents.shape[2]
 
+    # =========================================================
+    # Load CelebA labels in the same global order
+    # =========================================================
+    factor_names = FACTOR_NAMES
+    with open(args.attr_path, "r") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    declared_num = int(lines[0])
+    all_attr_names = lines[1].split()
+    attr_to_idx = {a: i for i, a in enumerate(all_attr_names)}
+    missing = [a for a in factor_names if a not in attr_to_idx]
+    if missing:
+        raise ValueError(f"Missing attributes in CelebA annotations: {missing}")
+    selected_cols = [attr_to_idx[a] for a in factor_names]
+    filenames = []
+    labels = []
+    for line in lines[2:]:
+        parts = line.split()
+        filename = parts[0]
+        raw_attrs = [int(x) for x in parts[1:]]
+        y = [raw_attrs[c] for c in selected_cols]
+        y = ((np.array(y, dtype=np.int64) + 1) // 2).astype(np.int64)
+        filenames.append(filename)
+        labels.append(y)
+    filenames = np.asarray(filenames)
+    all_labels = np.asarray(labels, dtype=np.int64)
+    if len(filenames) != declared_num:
+        raise ValueError(f"Annotation file declares {declared_num} samples, but {len(filenames)} were read.")
+    if len(all_labels) != num_samples:
+        raise ValueError(f"Number of global labels ({len(all_labels)}) does not match "
+                         f"number of latent samples ({num_samples}).")
+
+    num_classes_per_factor = [2 for j in range(all_labels.shape[1])]
+    
     # =========================
     # Load Shapes3D labels
     # =========================
-    with h5py.File(args.h5_path, 'r') as f:
-        all_labels = f['labels'][:]
+    # with h5py.File(args.h5_path, 'r') as f:
+    #     all_labels = f['labels'][:]
 
-    if all_latents.shape[0] != all_labels.shape[0]:
-        raise ValueError(f'The latent file must follow the original Shapes3D order. '
-                         f'Latents have {all_latents.shape[0]} samples, '
-                         f'but 3dshapes.h5 has {all_labels.shape[0]} labels.')
+    # if all_latents.shape[0] != all_labels.shape[0]:
+    #     raise ValueError(f'The latent file must follow the original Shapes3D order. '
+    #                      f'Latents have {all_latents.shape[0]} samples, '
+    #                      f'but 3dshapes.h5 has {all_labels.shape[0]} labels.')
 
-    factor_names = FACTOR_NAMES
-    if all_labels.shape[1] != len(factor_names):
-        factor_names = [f'factor_{i}' for i in range(all_labels.shape[1])]
+    # factor_names = FACTOR_NAMES
+    # if all_labels.shape[1] != len(factor_names):
+    #     factor_names = [f'factor_{i}' for i in range(all_labels.shape[1])]
 
-    num_classes_per_factor = [int(len(np.unique(all_labels[:, j]))) for j in range(all_labels.shape[1])]
+    # num_classes_per_factor = [int(len(np.unique(all_labels[:, j]))) for j in range(all_labels.shape[1])]
 
     # =========================
     # Load train/test indices
     # =========================
-    train_indices = np.load(args.train_idx_path).astype(np.int64)
-    test_indices = np.load(args.test_idx_path).astype(np.int64)
+    # train_indices = np.load(args.train_idx_path).astype(np.int64)
+    # test_indices = np.load(args.test_idx_path).astype(np.int64)
 
-    validate_indices(train_indices=train_indices, test_indices=test_indices, num_samples=num_samples)
+    # validate_indices(train_indices=train_indices, test_indices=test_indices, num_samples=num_samples)
 
     # =========================
     # Build train/test sets from the full representation
     # =========================
-    train_latents = all_latents[train_indices]
-    test_latents = all_latents[test_indices]
+    # train_latents = all_latents[train_indices]
+    # test_latents = all_latents[test_indices]
 
-    train_label_values = all_labels[train_indices]
-    test_label_values = all_labels[test_indices]
+    # train_label_values = all_labels[train_indices]
+    # test_label_values = all_labels[test_indices]
 
-    Y_train_all = convert_labels_to_class_ids(all_labels, train_label_values)
-    Y_test_all = convert_labels_to_class_ids(all_labels, test_label_values)
+    # Y_train_all = convert_labels_to_class_ids(all_labels, train_label_values)
+    # Y_test_all = convert_labels_to_class_ids(all_labels, test_label_values)
 
-    print('Train latents shape:', train_latents.shape)
-    print('Test latents shape:', test_latents.shape)
-    print('Train labels shape:', Y_train_all.shape)
-    print('Test labels shape:', Y_test_all.shape)
+    # print('Train latents shape:', train_latents.shape)
+    # print('Test latents shape:', test_latents.shape)
+    # print('Train labels shape:', Y_train_all.shape)
+    # print('Test labels shape:', Y_test_all.shape)
 
     # =========================
     # Metadata
@@ -170,12 +208,12 @@ def main():
         'metadata': {
             'all_npz': args.npz,
             'latent_key': latent_key,
-            'h5_path': args.h5_path,
-            'train_idx_path': args.train_idx_path,
-            'test_idx_path': args.test_idx_path,
+            # 'h5_path': args.h5_path,
+            # 'train_idx_path': args.train_idx_path,
+            # 'test_idx_path': args.test_idx_path,
             'all_latents_shape': list(all_latents.shape),
-            'train_latents_shape': list(train_latents.shape),
-            'test_latents_shape': list(test_latents.shape),
+            # 'train_latents_shape': list(train_latents.shape),
+            # 'test_latents_shape': list(test_latents.shape),
             'num_slots_evaluated': int(num_slots),
             'model': {
                 'type': 'LinearSVC',
@@ -202,9 +240,22 @@ def main():
     # =========================
     for factor_index, factor_name in enumerate(factor_names):
         print(f'\n========== Factor: {factor_name} (index={factor_index}) ==========')
-        y_train = Y_train_all[:, factor_index]
-        y_test = Y_test_all[:, factor_index]
+        # y_train = Y_train_all[:, factor_index]
+        # y_test = Y_test_all[:, factor_index]
+        safe_name = factor_name.lower()
+        train_idx_path = os.path.join(args.splits_dir, f'{safe_name}_train.npy')
+        test_idx_path = os.path.join(args.splits_dir, f'{safe_name}_test.npy')
+        train_idx = np.load(train_idx_path).astype(np.int64)
+        test_idx = np.load(test_idx_path).astype(np.int64)
+        if np.any(train_idx < 0) or np.any(train_idx >= num_samples):
+            raise IndexError(f"Train indices out of range for factor {factor_name}")
+        if np.any(test_idx < 0) or np.any(test_idx >= num_samples):
+            raise IndexError(f"Test indices out of range for factor {factor_name}")
+        y_train = all_labels[train_idx, factor_index]
+        y_test = all_labels[test_idx, factor_index]
 
+        print("Train size:", len(train_idx))
+        print("Test size:", len(test_idx))
         print('y_train shape:', y_train.shape)
         print('y_test shape:', y_test.shape)
         print('Unique train classes:', np.unique(y_train))
@@ -215,8 +266,10 @@ def main():
         for slot_index in range(num_slots):
             print(f'Training LinearSVC for slot {slot_index} -> predict {factor_name}')
 
-            X_train = train_latents[:, slot_index, :]
-            X_test = test_latents[:, slot_index, :]
+            # X_train = train_latents[:, slot_index, :]
+            # X_test = test_latents[:, slot_index, :]
+            X_train = all_latents[train_idx, slot_index, :]
+            X_test = all_latents[test_idx, slot_index, :]
 
             scaler = StandardScaler()
             X_train_scaled = scaler.fit_transform(X_train)
@@ -239,7 +292,8 @@ def main():
     print('=' * 80)
     table_data = {name: [results['results'][name][str(slot)]['test_accuracy'] for slot in range(num_slots)] for name in factor_names}
     df_test = pd.DataFrame(table_data, index=[f'Slot {i}' for i in range(num_slots)])
-    df_test.columns = ['Flo', 'Wal', 'Obj', 'Scl', 'Shp', 'Ori']
+    # df_test.columns = ['Flo', 'Wal', 'Obj', 'Scl', 'Shp', 'Ori']
+    df_test.columns = ['Eye', 'Mal', 'Hat', 'Smi', 'Mus', 'Ear']
     df_test = df_test.mul(100).round(2)
     print(df_test)
 
@@ -261,14 +315,12 @@ def main():
 
     if 'factor_VAE' in results:
         fv = results['factor_VAE']
-        if isinstance(fv, dict):
-            print('FactorVAE summary:')
-            print(f"  eval_accuracy:  {fv.get('eval_accuracy')}")
-    if 'dci score' in results:
-        dci = results['dci score']
-        if isinstance(dci, dict):
-            print('DCI summary:')
-            print(f"  disentanglement: {dci.get('disentanglement')}")
+        print('FactorVAE summary:')
+        print(f"  eval_accuracy:  {fv.get('eval_accuracy')}")
+    if 'dci' in results:
+        dci = results['dci']
+        print('DCI summary:')
+        print(f"  disentanglement: {dci.get('disentanglement')}")
     print('End of bmvc26_recognition_latent')
 
 
