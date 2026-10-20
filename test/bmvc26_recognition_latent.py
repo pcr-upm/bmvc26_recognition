@@ -78,37 +78,6 @@ def main():
     composite.add(sr)
 
     composite.parse_options(unknown)
-    # =========================================================
-    # Load CelebA labels in the same global order
-    # =========================================================
-    # factor_names = FACTOR_NAMES
-    # with open(attr_path, "r") as f:
-    #     lines = [line.strip() for line in f if line.strip()]
-    # declared_num = int(lines[0])
-    # all_attr_names = lines[1].split()
-    # attr_to_idx = {a: i for i, a in enumerate(all_attr_names)}
-    # missing = [a for a in factor_names if a not in attr_to_idx]
-    # if missing:
-    #     raise ValueError(f"Missing attributes in CelebA annotations: {missing}")
-    # selected_cols = [attr_to_idx[a] for a in factor_names]
-    # filenames = []
-    # labels = []
-    # for line in lines[2:]:
-    #     parts = line.split()
-    #     filename = parts[0]
-    #     raw_attrs = [int(x) for x in parts[1:]]
-    #     y = [raw_attrs[c] for c in selected_cols]
-    #     y = ((np.array(y, dtype=np.int64) + 1) // 2).astype(np.int64)
-    #     filenames.append(filename)
-    #     labels.append(y)
-    # filenames = np.asarray(filenames)
-    # all_labels = np.asarray(labels, dtype=np.int64)
-    # if len(filenames) != declared_num:
-    #     raise ValueError(f"Annotation file declares {declared_num} samples, but {len(filenames)} were read.")
-    # if len(all_labels) != num_samples:
-    #     raise ValueError(f"Number of global labels ({len(all_labels)}) does not match "
-    #                      f"number of latent samples ({num_samples}).")
-    # num_classes_per_factor = [2 for j in range(all_labels.shape[1])]
     # =========================
     # Load full-dataset latents and labels
     # =========================
@@ -121,20 +90,54 @@ def main():
     if all_latents.ndim != 3:
         raise ValueError(f'Expected latents with shape (N, K, D), got {all_latents.shape}')
     num_samples = all_latents.shape[0]
-    with h5py.File(h5_path, 'r') as f:
-        all_labels = f['labels'][:]
-    if all_latents.shape[0] != all_labels.shape[0]:
-        raise ValueError(f'The latent file must follow the original Shapes3D order. '
-                         f'Latents have {all_latents.shape[0]} samples, '
-                         f'but 3dshapes.h5 has {all_labels.shape[0]} labels.')
+    if sr.database == 'shapes3d':
+        with h5py.File(h5_path, 'r') as f:
+            all_labels = f['labels'][:]
+        if all_latents.shape[0] != all_labels.shape[0]:
+            raise ValueError(f'The latent file must follow the original Shapes3D order. '
+                            f'Latents have {all_latents.shape[0]} samples, '
+                            f'but 3dshapes.h5 has {all_labels.shape[0]} labels.')
+    if sr.database == 'celeba':
+        with open("/home/database/celeba/list_attr_celeba.txt", "r") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        declared_num = int(lines[0])
+        all_attr_names = lines[1].split()
+        attr_to_idx = {a: i for i, a in enumerate(all_attr_names)}
+        missing = [a for a in sr.factor_names if a not in attr_to_idx]
+        if missing:
+            raise ValueError(f"Missing attributes in CelebA annotations: {missing}")
+        selected_cols = [attr_to_idx[a] for a in sr.factor_names]
+        filenames = []
+        labels = []
+        for line in lines[2:]:
+            parts = line.split()
+            filename = parts[0]
+            raw_attrs = [int(x) for x in parts[1:]]
+            y = [raw_attrs[c] for c in selected_cols]
+            y = ((np.array(y, dtype=np.int64) + 1) // 2).astype(np.int64)
+            filenames.append(filename)
+            labels.append(y)
+        filenames = np.asarray(filenames)
+        all_labels = np.asarray(labels, dtype=np.int64)
+        if len(filenames) != declared_num:
+            raise ValueError(f"Annotation file declares {declared_num} samples, but {len(filenames)} were read.")
+        if len(all_labels) != num_samples:
+            raise ValueError(f"Number of global labels ({len(all_labels)}) does not match "
+                             f"number of latent samples ({num_samples}).")
     # =========================
     # Build train/test sets from the full representation
     # =========================
-    validate_indices(train_indices=sr.train_indices, test_indices=sr.valid_indices, num_samples=num_samples)
-    x_train = all_latents[sr.train_indices]
-    x_valid = all_latents[sr.valid_indices]
-    y_train = convert_labels_to_class_ids(all_labels, all_labels[sr.train_indices])
-    y_valid = convert_labels_to_class_ids(all_labels, all_labels[sr.valid_indices])
+    if sr.database == 'shapes3d':
+        validate_indices(train_indices=sr.train_indices, test_indices=sr.valid_indices, num_samples=num_samples)
+        x_train = all_latents[sr.train_indices]
+        x_valid = all_latents[sr.valid_indices]
+        y_train = convert_labels_to_class_ids(all_labels, all_labels[sr.train_indices])
+        y_valid = convert_labels_to_class_ids(all_labels, all_labels[sr.valid_indices])
+    if sr.database == 'celeba':
+        x_train = all_latents
+        x_valid = all_latents
+        y_train = all_labels
+        y_valid = all_labels
     print('Train latents shape:', x_train.shape)
     print('Test latents shape:', x_valid.shape)
     print('Train labels shape:', y_train.shape)
