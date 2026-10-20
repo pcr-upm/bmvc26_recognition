@@ -25,21 +25,22 @@ class BMVC26Recognition(Recognition):
     def __init__(self, path):
         super().__init__()
         self.path = path
-        self.lat = None
-        self.dim = None
+        self.nlats = None
+        self.ndims = None
+        self.latents = None
 
     def parse_options(self, params):
         super().parse_options(params)
         import argparse
         parser = argparse.ArgumentParser(prog='BMVC26Recognition', add_help=False)
-        parser.add_argument('--lat', type=int, default=10, 
+        parser.add_argument('--nlats', type=int, default=10, 
                             help='The number of latent units.')
-        parser.add_argument('--dim', type=int, default=32, 
+        parser.add_argument('--ndims', type=int, default=32, 
                             help='The dimensionality of the latent space.')
         args, unknown = parser.parse_known_args(params)
         print(parser.format_usage())
-        self.lat = int(args.lat)
-        self.dim = int(args.dim)
+        self.nlats = int(args.nlats)
+        self.ndims = int(args.ndims)
         if self.database == 'shapes3d':
             self.factor_names = ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']
             self.columns = ['Flo', 'Wal', 'Obj', 'Scl', 'Shp', 'Ori']
@@ -56,7 +57,7 @@ class BMVC26Recognition(Recognition):
     def train(self, anns_train, anns_valid):
         (x_train, y_train) = anns_train
         (x_valid, y_valid) = anns_valid
-        results = {'metadata': {'database': self.database, 'latents_train': list(x_train.shape), 'num_slots': int(self.lat), 'model': {'type': 'LinearSVC', 'random_state': 42, 'dual': False, 'max_iter': 5000, 'input_representation': 'single_slot_raw_vector', 'input_dim': int(self.dim)}, 'factors': [{'factor_name': self.factor_names[j], 'factor_index': j, 'num_classes': int(len(np.unique(y_train[:, j])))} for j in range(len(self.factor_names))]}, 'results': {}}
+        results = {'metadata': {'database': self.database, 'latents_train': list(x_train.shape), 'num_slots': int(self.nlats), 'model': {'type': 'LinearSVC', 'random_state': 42, 'dual': False, 'max_iter': 5000, 'input_representation': 'single_slot_raw_vector', 'input_dim': int(self.ndims)}, 'factors': [{'factor_name': self.factor_names[j], 'factor_index': j, 'num_classes': int(len(np.unique(y_train[:, j])))} for j in range(len(self.factor_names))]}, 'results': {}}
         print('Train one SVM per factor/slot:')
         for factor_index, factor_name in enumerate(self.factor_names):
             print(f'\n========== Factor: {factor_name} (index={factor_index}) ==========')
@@ -65,7 +66,7 @@ class BMVC26Recognition(Recognition):
             print('y_train_factor shape:', y_train_factor.shape, ' classes:', np.unique(y_train_factor))
             print('y_valid_factor shape:', y_valid_factor.shape, ' classes:', np.unique(y_valid_factor))
             results['results'][factor_name] = {}
-            for slot_index in range(self.lat):
+            for slot_index in range(self.nlats):
                 print(f'Training LinearSVC for slot {slot_index} -> predict {factor_name}')
                 scaler = StandardScaler()
                 x_train_factor = scaler.fit_transform(x_train[:, slot_index, :] if self.database == 'shapes3d' else x_train[self.train_indices[factor_index], slot_index, :])
@@ -81,8 +82,8 @@ class BMVC26Recognition(Recognition):
                 results['results'][factor_name][str(slot_index)] = {'train_acc': float(train_acc), 'valid_acc': float(valid_acc)}
         # Draw Table 3/6 in the main paper
         print('=' * 80)
-        table_data = {name: [results['results'][name][str(slot)]['valid_acc'] for slot in range(self.lat)] for name in self.factor_names}
-        df_test = pd.DataFrame(table_data, index=[f'Slot {i}' for i in range(self.lat)])
+        table_data = {name: [results['results'][name][str(slot)]['valid_acc'] for slot in range(self.nlats)] for name in self.factor_names}
+        df_test = pd.DataFrame(table_data, index=[f'Slot {i}' for i in range(self.nlats)])
         df_test.columns = self.columns
         df_test = df_test.mul(100).round(2)
         print(df_test)
@@ -104,7 +105,27 @@ class BMVC26Recognition(Recognition):
                 print(f"  disentanglement: {dci.get('disentanglement')}")
 
     def load(self, mode):
+        def get_latent_key(npz_data, requested_key=None):
+            if requested_key is not None:
+                if requested_key not in npz_data:
+                    raise KeyError(f"Requested latent key '{requested_key}' not found. Available keys: {list(npz_data.keys())}.")
+                return requested_key
+            candidate_keys = ['latents', 'z', 'features', 'representations']
+            for key in candidate_keys:
+                if key in npz_data:
+                    return key
+            raise KeyError(f"No latent key found in .npz. Expected one of: {candidate_keys}. Available keys: {list(npz_data.keys())}.")
+
         print('Load model')
+        path = 'data/' + self.database + '/lat' + str(self.nlats) + '/dim' + str(self.ndims)
+        filename = 'epoch=000000.npz' if self.database == 'shapes3d' else self.database + '_representations.npz'
+        data = np.load(os.path.join(path, filename), allow_pickle=True)
+        print('NPZ keys:', data.files)
+        latent_key = get_latent_key(data, 'latents')
+        self.latents = data[latent_key]
+        print('Latents shape:', self.latents.shape)
+        if self.latents.ndim != 3:
+            raise ValueError(f'Expected latents with shape (N, K, D), got {self.latents.shape}')
 
     def process(self, ann, pred):
         print('Process image')
