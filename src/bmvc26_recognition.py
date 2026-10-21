@@ -118,11 +118,11 @@ class BMVC26Recognition(Recognition):
 
         print('Load model')
         path = 'data/' + self.database + '/lat' + str(self.nlats) + '/dim' + str(self.ndims)
-        filename = ('epoch=000000.npz' if self.nlats == 6 and self.ndims == 32 else 'epoch=000010.npz') if self.database == 'shapes3d' else self.database + '_representations.npz'
-        data = np.load(os.path.join(path, filename), allow_pickle=True)
-        print(f"Model: {os.path.join(path, filename)} | NPZ keys: {data.files}")
-        latent_key = get_latent_key(data, 'latents')
-        self.latents = data[latent_key]
+        filename = os.path.join(path, ('epoch=000000.npz' if self.nlats == 6 and self.ndims == 32 else 'epoch=000010.npz') if self.database == 'shapes3d' else self.database + '_representations.npz')
+        print(f"Model: {filename}")
+        data = np.load(filename, allow_pickle=True)
+        print(f"NPZ keys: {data.files}")
+        self.latents = data[get_latent_key(data, 'latents')]
         print('Latents shape:', self.latents.shape)
         if self.latents.ndim != 3:
             raise ValueError(f'Expected latents with shape (N, K, D), got {self.latents.shape}')

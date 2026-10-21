@@ -6,7 +6,6 @@ __email__ = 'roberto.valle@upm.es'
 import os
 import sys
 sys.path.append(os.getcwd())
-import h5py
 import numpy as np
 from pcr_framework.src.datasets import Database, Sources
 from pcr_framework.src.constants import Modes
@@ -28,7 +27,7 @@ def parse_options():
     return unknown, show_viewer
 
 
-def load_annotations(mode, source, ref):
+def load_annotations(source, ref):
     """
     Load ground-truth annotations from the specified database source.
     """
@@ -40,18 +39,20 @@ def load_annotations(mode, source, ref):
     idx = next((idx for idx, subset in enumerate(datasets) if ref in subset), None)
     if idx is None:
         raise ValueError(f'Database is not implemented: {ref}')
-    db = Database.__subclasses__()[idx]()
-    namespace, name, split = db.get_namespace(mode, source, ref)
-    path = tempfile.gettempdir()
-    kwargs = {'path': namespace, 'name': name, 'cache_dir': path, 'split': split, 'download_mode': 'force_redownload'}
-    ds = load_dataset(**kwargs)
     # Load all lines (one image per line)
     anns = []
-    for line in tqdm(ds, file=sys.stdout):
-        seq = db.load_line(source, ref, path, line)
-        if len(seq.images) == 0:
-            continue
-        anns.append(seq)
+    db = Database.__subclasses__()[idx]()
+    namespace, _, _ = db.get_namespace(Modes.TRAIN, source, ref)
+    path = tempfile.gettempdir()
+    splits = ['train'] if ref == 'shapes3d' else ['train', 'validation', 'test']
+    for split in splits:
+        kwargs = {'path': namespace, 'cache_dir': path, 'split': split, 'download_mode': 'force_redownload'}
+        ds = load_dataset(**kwargs)
+        for line in tqdm(ds, file=sys.stdout):
+            seq = db.load_line(source, ref, path, line)
+            if len(seq.images) == 0:
+                continue
+            anns.append(seq)
     return anns
 
 
@@ -94,45 +95,27 @@ def main():
     # Load full-dataset latents and labels
     # =========================
     composite.load(Modes.TRAIN)
-    # anns = load_annotations(Modes.TRAIN, Sources.HUGFACE, sr.database)
-    num_samples = sr.latents.shape[0]
+    anns = load_annotations(Sources.HUGFACE, sr.database)
+    labels = []
+    for seq in anns:
+        attributes = {attr.label.name for attr in seq.images[0].objects[0].attributes}
+        labels.append([int(factor in attributes) for factor in sr.factor_names])
+    labels =  np.asarray(labels, dtype=np.int64)
+    nsamples = sr.latents.shape[0]
+    if len(labels) != nsamples:
+        raise ValueError(f"Number of global labels ({len(labels)}) does not match number of latent samples ({nsamples}).")
     if sr.database == 'shapes3d':
+        import h5py
         with h5py.File("/home/database/shapes3d/3dshapes.h5", 'r') as f:
             labels = f['labels'][:]
         if sr.latents.shape[0] != labels.shape[0]:
             raise ValueError(f'The latent file must follow the original Shapes3D order. Latents have {sr.latents.shape[0]} samples, but 3dshapes.h5 has {labels.shape[0]} labels.')
         labels = convert_labels_to_class_ids(labels, labels)
-    if sr.database == 'celeba':
-        with open("/home/database/celeba/list_attr_celeba.txt", "r") as f:
-            lines = [line.strip() for line in f if line.strip()]
-        declared_num = int(lines[0])
-        all_attr_names = lines[1].split()
-        attr_to_idx = {a: i for i, a in enumerate(all_attr_names)}
-        missing = [a for a in sr.factor_names if a not in attr_to_idx]
-        if missing:
-            raise ValueError(f"Missing attributes in CelebA annotations: {missing}")
-        selected_cols = [attr_to_idx[a] for a in sr.factor_names]
-        filenames = []
-        labels = []
-        for line in lines[2:]:
-            parts = line.split()
-            filename = parts[0]
-            raw_attrs = [int(x) for x in parts[1:]]
-            y = [raw_attrs[c] for c in selected_cols]
-            y = ((np.array(y, dtype=np.int64) + 1) // 2).astype(np.int64)
-            filenames.append(filename)
-            labels.append(y)
-        filenames = np.asarray(filenames)
-        labels = np.asarray(labels, dtype=np.int64)
-        if len(filenames) != declared_num:
-            raise ValueError(f"Annotation file declares {declared_num} samples, but {len(filenames)} were read.")
-        if len(labels) != num_samples:
-            raise ValueError(f"Number of global labels ({len(labels)}) does not match number of latent samples ({num_samples}).")
     # =========================
     # Build train/test sets from the full representation
     # =========================
     if sr.database == 'shapes3d':
-        validate_indices(train_indices=sr.train_indices, test_indices=sr.valid_indices, num_samples=num_samples)
+        validate_indices(train_indices=sr.train_indices, test_indices=sr.valid_indices, num_samples=nsamples)
         x_train = sr.latents[sr.train_indices]
         x_valid = sr.latents[sr.valid_indices]
         y_train = labels[sr.train_indices]
