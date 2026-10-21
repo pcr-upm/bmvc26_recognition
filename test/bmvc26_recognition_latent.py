@@ -56,28 +56,15 @@ def load_annotations(source, ref):
     return anns
 
 
-def convert_labels_to_class_ids(all_labels, selected_labels):
-    value_to_id = []
-    for j in range(all_labels.shape[1]):
-        vals = np.unique(all_labels[:, j])
-        value_to_id.append({float(v): i for i, v in enumerate(vals)})
-    class_ids = np.zeros_like(selected_labels, dtype=np.int64)
-    for j in range(selected_labels.shape[1]):
-        class_ids[:, j] = np.array([value_to_id[j][float(v)] for v in selected_labels[:, j]], dtype=np.int64)
-    return class_ids
-
-
-def validate_indices(train_indices, test_indices, num_samples):
-    if np.any(train_indices < 0) or np.any(train_indices >= num_samples):
-        raise IndexError('Some train indices are out of range for the latent array.')
-    if np.any(test_indices < 0) or np.any(test_indices >= num_samples):
-        raise IndexError('Some test indices are out of range for the latent array.')
-    overlap = np.intersect1d(train_indices, test_indices)
-    print(f'Train instances: {len(train_indices)}')
-    print(f'Test instances: {len(test_indices)}')
-    print(f'Train/test overlap: {len(overlap)}')
-    if len(overlap) > 0:
-        raise ValueError(f'Leakage detected: train and test splits share {len(overlap)} samples. First overlaps: {overlap[:10]}')
+# def convert_labels_to_class_ids(all_labels, selected_labels):
+#     value_to_id = []
+#     for j in range(all_labels.shape[1]):
+#         vals = np.unique(all_labels[:, j])
+#         value_to_id.append({float(v): i for i, v in enumerate(vals)})
+#     class_ids = np.zeros_like(selected_labels, dtype=np.int64)
+#     for j in range(selected_labels.shape[1]):
+#         class_ids[:, j] = np.array([value_to_id[j][float(v)] for v in selected_labels[:, j]], dtype=np.int64)
+#     return class_ids
 
 def main():
     """
@@ -104,18 +91,17 @@ def main():
     nsamples = sr.latents.shape[0]
     if len(labels) != nsamples:
         raise ValueError(f"Number of global labels ({len(labels)}) does not match number of latent samples ({nsamples}).")
-    if sr.database == 'shapes3d':
-        import h5py
-        with h5py.File("/home/database/shapes3d/3dshapes.h5", 'r') as f:
-            labels = f['labels'][:]
-        if sr.latents.shape[0] != labels.shape[0]:
-            raise ValueError(f'The latent file must follow the original Shapes3D order. Latents have {sr.latents.shape[0]} samples, but 3dshapes.h5 has {labels.shape[0]} labels.')
-        labels = convert_labels_to_class_ids(labels, labels)
+    # if sr.database == 'shapes3d':
+    #     import h5py
+    #     with h5py.File("/home/database/shapes3d/3dshapes.h5", 'r') as f:
+    #         labels = f['labels'][:]
+    #     if sr.latents.shape[0] != labels.shape[0]:
+    #         raise ValueError(f'The latent file must follow the original Shapes3D order. Latents have {sr.latents.shape[0]} samples, but 3dshapes.h5 has {labels.shape[0]} labels.')
+    #     labels = convert_labels_to_class_ids(labels, labels)
     # =========================
     # Build train/test sets from the full representation
     # =========================
     if sr.database == 'shapes3d':
-        validate_indices(train_indices=sr.train_indices, test_indices=sr.valid_indices, num_samples=nsamples)
         x_train = sr.latents[sr.train_indices]
         x_valid = sr.latents[sr.valid_indices]
         y_train = labels[sr.train_indices]

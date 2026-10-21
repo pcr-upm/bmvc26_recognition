@@ -44,13 +44,13 @@ class BMVC26Recognition(Recognition):
         if self.database == 'shapes3d':
             self.factor_names = ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']
             self.columns = ['Flo', 'Wal', 'Obj', 'Scl', 'Shp', 'Ori']
-            self.train_indices = np.load('/home/database/shapes3d/splits/train_unbiased.npy').astype(np.int64)
-            self.valid_indices = np.load('/home/database/shapes3d/splits/test_fixed.npy').astype(np.int64)
+            self.train_indices = np.load('splits/shapes3d/train_unbiased.npy').astype(np.int64)
+            self.valid_indices = np.load('splits/shapes3d/valid.npy').astype(np.int64)
         elif self.database == 'celeba':
             self.factor_names = ['Eyeglasses', 'Male', 'Wearing_Hat', 'Smiling', 'Mustache', 'Wearing_Earrings']
             self.columns = ['Eye', 'Mal', 'Hat', 'Smi', 'Mus', 'Ear']
-            self.train_indices = [np.load(os.path.join('/home/database/celeba/splits_per_factor', f'{factor_name.lower()}_train.npy')).astype(np.int64) for factor_name in self.factor_names]
-            self.valid_indices = [np.load(os.path.join('/home/database/celeba/splits_per_factor', f'{factor_name.lower()}_test.npy')).astype(np.int64) for factor_name in self.factor_names]
+            self.train_indices = [np.load(os.path.join('splits/celeba/splits_per_factor', f'{factor_name.lower()}_train.npy')).astype(np.int64) for factor_name in self.factor_names]
+            self.valid_indices = [np.load(os.path.join('splits/celeba/splits_per_factor', f'{factor_name.lower()}_valid.npy')).astype(np.int64) for factor_name in self.factor_names]
         else:
             raise ValueError('Database is not implemented')
 
