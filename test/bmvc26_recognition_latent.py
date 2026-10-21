@@ -56,16 +56,6 @@ def load_annotations(source, ref):
     return anns
 
 
-# def convert_labels_to_class_ids(all_labels, selected_labels):
-#     value_to_id = []
-#     for j in range(all_labels.shape[1]):
-#         vals = np.unique(all_labels[:, j])
-#         value_to_id.append({float(v): i for i, v in enumerate(vals)})
-#     class_ids = np.zeros_like(selected_labels, dtype=np.int64)
-#     for j in range(selected_labels.shape[1]):
-#         class_ids[:, j] = np.array([value_to_id[j][float(v)] for v in selected_labels[:, j]], dtype=np.int64)
-#     return class_ids
-
 def main():
     """
     On Structured Disentangled Representation and the Limits of Global Scores latent-unit probing script.
@@ -85,19 +75,16 @@ def main():
     anns = load_annotations(Sources.HUGFACE, sr.database)
     labels = []
     for seq in anns:
-        attributes = {attr.label.name for attr in seq.images[0].objects[0].attributes}
-        labels.append([int(factor in attributes) for factor in sr.factor_names])
-    labels =  np.asarray(labels, dtype=np.int64)
+        attributes = [attr.label.name for attr in seq.images[0].objects[0].attributes]
+        labels.append([int(attr) for attr in attributes] if sr.database == 'shapes3d' else [int(factor in attributes) for factor in sr.factor_names])
+    labels = np.asarray(labels, dtype=np.int64)
+    if sr.database == 'shapes3d':
+        # Sort rows to the 3dshapes.h5 order (floor, object, orientation, scale, shape, wall)
+        labels = labels[:, [0, 5, 1, 3, 4, 2]]
+        labels = labels[np.lexsort(labels.T[::-1])]
     nsamples = sr.latents.shape[0]
     if len(labels) != nsamples:
         raise ValueError(f"Number of global labels ({len(labels)}) does not match number of latent samples ({nsamples}).")
-    # if sr.database == 'shapes3d':
-    #     import h5py
-    #     with h5py.File("/home/database/shapes3d/3dshapes.h5", 'r') as f:
-    #         labels = f['labels'][:]
-    #     if sr.latents.shape[0] != labels.shape[0]:
-    #         raise ValueError(f'The latent file must follow the original Shapes3D order. Latents have {sr.latents.shape[0]} samples, but 3dshapes.h5 has {labels.shape[0]} labels.')
-    #     labels = convert_labels_to_class_ids(labels, labels)
     # =========================
     # Build train/test sets from the full representation
     # =========================
@@ -106,15 +93,11 @@ def main():
         x_valid = sr.latents[sr.valid_indices]
         y_train = labels[sr.train_indices]
         y_valid = labels[sr.valid_indices]
-    if sr.database == 'celeba':
+    elif sr.database == 'celeba':
         x_train = sr.latents
         x_valid = sr.latents
         y_train = labels
         y_valid = labels
-    print('Train latents shape:', x_train.shape)
-    print('Test latents shape:', x_valid.shape)
-    print('Train labels shape:', y_train.shape)
-    print('Test labels shape:', y_valid.shape)
     composite.train((x_train, y_train), (x_valid, y_valid))
     print('End of bmvc26_recognition_latent')
 

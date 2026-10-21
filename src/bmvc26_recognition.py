@@ -71,6 +71,8 @@ class BMVC26Recognition(Recognition):
                 scaler = StandardScaler()
                 x_train_factor = scaler.fit_transform(x_train[:, slot_index, :] if self.database == 'shapes3d' else x_train[self.train_indices[factor_index], slot_index, :])
                 x_valid_factor = scaler.transform(x_valid[:, slot_index, :] if self.database == 'shapes3d' else x_valid[self.valid_indices[factor_index], slot_index, :])
+                print('x_train_factor shape:', x_train_factor.shape)
+                print('x_valid_factor shape:', x_valid_factor.shape)
                 clf = LinearSVC(random_state=42, dual=False, max_iter=5000)
                 clf.fit(x_train_factor, y_train_factor)
                 pred_train_factor = clf.predict(x_train_factor)
