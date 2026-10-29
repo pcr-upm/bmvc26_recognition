@@ -43,7 +43,8 @@ def load_annotations(source, ref):
     anns = []
     db = Database.__subclasses__()[idx]()
     namespace, _, _ = db.get_namespace(Modes.TRAIN, source, ref)
-    path = tempfile.gettempdir()
+    # path = tempfile.gettempdir()
+    path = '/home/database/'
     splits = ['train'] if ref == 'shapes3d' else ['train', 'validation', 'test']
     for split in splits:
         kwargs = {'path': namespace, 'cache_dir': path, 'split': split, 'download_mode': 'force_redownload'}
@@ -73,11 +74,7 @@ def main():
     # =========================
     composite.load(Modes.TRAIN)
     anns = load_annotations(Sources.HUGFACE, sr.database)
-    labels = []
-    for seq in anns:
-        attributes = [attr.label.name for attr in seq.images[0].objects[0].attributes]
-        labels.append([int(attr) for attr in attributes] if sr.database == 'shapes3d' else [int(factor in attributes) for factor in sr.factor_names])
-    labels = np.asarray(labels, dtype=np.int64)
+    labels = np.asarray([[int(cat.label.name) for cat in ann.images[0].objects[0].categories] if sr.database == 'shapes3d' else [int(ann.images[0].objects[0].has_category(factor)) for factor in sr.factor_names] for ann in anns], dtype=np.int64)
     if sr.database == 'shapes3d':
         # Sort rows to the 3dshapes.h5 order (floor, object, orientation, scale, shape, wall)
         labels = labels[:, [0, 5, 1, 3, 4, 2]]

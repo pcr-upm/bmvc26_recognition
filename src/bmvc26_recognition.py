@@ -49,8 +49,8 @@ class BMVC26Recognition(Recognition):
         elif self.database == 'celeba':
             self.factor_names = ['Eyeglasses', 'Male', 'Wearing_Hat', 'Smiling', 'Mustache', 'Wearing_Earrings']
             self.columns = ['Eye', 'Mal', 'Hat', 'Smi', 'Mus', 'Ear']
-            self.train_indices = [np.load(os.path.join('splits/celeba/splits_per_factor', f'{factor_name.lower()}_train.npy')).astype(np.int64) for factor_name in self.factor_names]
-            self.valid_indices = [np.load(os.path.join('splits/celeba/splits_per_factor', f'{factor_name.lower()}_valid.npy')).astype(np.int64) for factor_name in self.factor_names]
+            self.train_indices = [np.load(os.path.join('splits/celeba', f'{factor_name.lower()}_train.npy')).astype(np.int64) for factor_name in self.factor_names]
+            self.valid_indices = [np.load(os.path.join('splits/celeba', f'{factor_name.lower()}_valid.npy')).astype(np.int64) for factor_name in self.factor_names]
         else:
             raise ValueError('Database is not implemented')
 
