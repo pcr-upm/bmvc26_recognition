@@ -43,8 +43,7 @@ def load_annotations(source, ref):
     anns = []
     db = Database.__subclasses__()[idx]()
     namespace, _, _ = db.get_namespace(Modes.TRAIN, source, ref)
-    # path = tempfile.gettempdir()
-    path = '/home/database/'
+    path = tempfile.gettempdir()
     splits = ['train'] if ref == 'shapes3d' else ['train', 'validation', 'test']
     for split in splits:
         kwargs = {'path': namespace, 'cache_dir': path, 'split': split, 'download_mode': 'force_redownload'}
