@@ -102,7 +102,7 @@ def main():
         if sr.nlats == 6 and sr.ndims == 4:
             # Subfigure A: Model (6, 4), fixed latent units [1, 2], reference image 176977
             idx_sub1 = 176977
-            sr.process(idx_sub1, anns[idx_sub1] if len(anns) > idx_sub1 else None, fixed_slots=[1, 2])
+            sr.process(idx_sub1, None, fixed_slots=[1, 2])
 
             # Subfigura B
             idx_sub2 = 177432
