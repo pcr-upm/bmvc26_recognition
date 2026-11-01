@@ -1,0 +1,13 @@
+*.ckpt
+*.npz
+*.h5
+data/**/*.h5
+data/**/lat*/**/*.ckpt
+data/**/lat*/**/*.npz
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+logs/

@@ -95,8 +95,51 @@ def main():
         y_train = labels
         y_valid = labels
     composite.train((x_train, y_train), (x_valid, y_valid))
-    print('End of bmvc26_recognition_latent')
+    # =========================
+    # Conditional image generation (Figure 2 subfigures)
+    # =========================
+    if sr.database == 'shapes3d' and sr.model is not None:
+        if sr.nlats == 6 and sr.ndims == 4:
+            # Subfigure A: Model (6, 4), fixed latent units [1, 2], reference image 176977
+            idx_sub1 = 176977
+            sr.process(idx_sub1, anns[idx_sub1] if len(anns) > idx_sub1 else None, fixed_slots=[1, 2])
 
+            # Subfigura B
+            idx_sub2 = 177432
+            sr.process(idx_sub2, anns[idx_sub2] if len(anns) > idx_sub2 else None, fixed_slots=[2, 4])
+
+        elif sr.nlats == 10 and sr.ndims == 32:
+            # Subfigura C
+            idx_sub3 = 176977
+            sr.process(idx_sub3, anns[idx_sub3] if len(anns) > idx_sub3 else None, fixed_slots=[5, 9])
+
+    print('End of bmvc26_recognition_latent')
+    # if sr.database == 'shapes3d' and sr.model is not None:
+    #     if sr.nlats == 6 and sr.ndims == 4:
+    #         # Subfigure A: (6, 4), fixed latent units [1, 2], ref. imagen 176977
+    #         idx_sub1 = 176977
+    #         sr.process(idx_sub1, anns[idx_sub1] if len(anns) > idx_sub1 else None, fixed_slots=[1, 2])
+
+    #         # Subfigura B
+    #         idx_sub2 = 177432
+    #         sr.process(idx_sub2, anns[idx_sub2] if len(anns) > idx_sub2 else None, fixed_slots=[2, 4])
+
+    #         # Subfigure C
+    #         if os.path.isdir('data/shapes3d/lat10/dim32'):
+    #             sr_10_32 = BMVC26Recognition('')
+    #             sr_10_32.parse_options(['--database', 'shapes3d', '--nlats', '10', '--ndims', '32', '--fixed-slots', '5', '9'])
+    #             sr_10_32.load(Modes.TRAIN)
+    #             if sr_10_32.model is not None:
+    #                 idx_sub3 = 176977
+    #                 sr_10_32.process(idx_sub3, anns[idx_sub3] if len(anns) > idx_sub3 else None, fixed_slots=[5, 9])
+
+    #     elif sr.nlats == 10 and sr.ndims == 32:
+    #         idx_sub3 = 176977
+    #         sr.process(idx_sub3, anns[idx_sub3] if len(anns) > idx_sub3 else None, fixed_slots=[5, 9])
+    #     else:
+    #         sr.process(176977, anns[176977] if len(anns) > 176977 else None)
+
+    print('End of bmvc26_recognition_latent')
 
 if __name__ == '__main__':
     main()
