@@ -188,15 +188,27 @@ class BMVC26Recognition(Recognition):
         elif self.database == 'celeba':
             self.factor_names = ['Eyeglasses', 'Male', 'Wearing_Hat', 'Smiling', 'Mustache', 'Wearing_Earrings']
             self.columns = ['Eye', 'Mal', 'Hat', 'Smi', 'Mus', 'Ear']
-            self.train_indices = [np.load(os.path.join('splits/celeba', f'{fn.lower()}_train.npy')).astype(np.int64) for fn in self.factor_names]
-            self.valid_indices = [np.load(os.path.join('splits/celeba', f'{fn.lower()}_valid.npy')).astype(np.int64) for fn in self.factor_names]
+            self.train_indices = [
+                np.load(os.path.join('splits/celeba', f'{fn.lower()}_train.npy')).astype(np.int64)
+                for fn in self.factor_names
+            ]
+            self.valid_indices = [
+                np.load(
+                    os.path.join('splits/celeba', f'{fn.lower()}_test.npy')
+                    if os.path.isfile(os.path.join('splits/celeba', f'{fn.lower()}_test.npy'))
+                    else os.path.join('splits/celeba', f'{fn.lower()}_valid.npy')
+                ).astype(np.int64)
+                for fn in self.factor_names
+            ]
         else:
             raise ValueError('Database is not implemented')
 
     def train(self, anns_train, anns_valid):
         (x_train, y_train) = anns_train
         (x_valid, y_valid) = anns_valid
-        results = {'metadata': {'database': self.database, 'latents_train': list(x_train.shape), 'num_slots': int(self.nlats), 'model': {'type': 'LinearSVC', 'random_state': 42, 'dual': False, 'max_iter': 5000, 'input_representation': 'single_slot_raw_vector', 'input_dim': int(self.ndims)}, 'factors': [{'factor_name': self.factor_names[j], 'factor_index': j, 'num_classes': int(len(np.unique(y_train[:, j])))} for j in range(len(self.factor_names))]}, 'results': {}}
+        svm_seed = 23 if self.database == 'celeba' else 42
+        np.random.seed(svm_seed)
+        results = {'metadata': {'database': self.database, 'latents_train': list(x_train.shape), 'num_slots': int(self.nlats), 'model': {'type': 'LinearSVC', 'random_state': svm_seed, 'dual': False, 'max_iter': 5000, 'input_representation': 'single_slot_raw_vector', 'input_dim': int(self.ndims)}, 'factors': [{'factor_name': self.factor_names[j], 'factor_index': j, 'num_classes': int(len(np.unique(y_train[:, j])))} for j in range(len(self.factor_names))]}, 'results': {}}
         print('Train one SVM per factor/slot:')
         for factor_index, factor_name in enumerate(self.factor_names):
             print(f'\n========== Factor: {factor_name} (index={factor_index}) ==========')
@@ -207,7 +219,7 @@ class BMVC26Recognition(Recognition):
                 scaler = StandardScaler()
                 x_train_factor = scaler.fit_transform(x_train[:, slot_index, :] if self.database == 'shapes3d' else x_train[self.train_indices[factor_index], slot_index, :])
                 x_valid_factor = scaler.transform(x_valid[:, slot_index, :] if self.database == 'shapes3d' else x_valid[self.valid_indices[factor_index], slot_index, :])
-                clf = LinearSVC(random_state=42, dual=False, max_iter=5000)
+                clf = LinearSVC(random_state=svm_seed, dual=False, max_iter=5000)
                 clf.fit(x_train_factor, y_train_factor)
                 train_acc = accuracy_score(y_train_factor, clf.predict(x_train_factor))
                 valid_acc = accuracy_score(y_valid_factor, clf.predict(x_valid_factor))
@@ -270,9 +282,14 @@ class BMVC26Recognition(Recognition):
         if config_path is None:
             candidates = [
                 os.path.join(base_path, f'lt{self.nlats}_{self.ndims}_disdiff_train.yaml'),
+                os.path.join(base_path, f'disdiff_train_{self.database}.yaml'),
                 os.path.join(base_path, 'disdiff_train_shapes3D.yaml'),
             ]
             config_path = next((p for p in candidates if os.path.isfile(p)), None)
+            if config_path is None:
+                yamls = glob.glob(os.path.join(base_path, '*.yaml'))
+                if yamls:
+                    config_path = yamls[0]
 
         ckpt_path = self.ckpt_path
         if ckpt_path is None:
@@ -359,9 +376,11 @@ class BMVC26Recognition(Recognition):
         if self.model is None:
             raise RuntimeError("Generative DisDiff model (.ckpt) must be loaded before generating representations (.npz).")
 
+        from tqdm import tqdm
+        latent_unit = int(self.model.model.diffusion_model.latent_unit)
+
         if self.database == 'shapes3d':
             import h5py
-            from tqdm import tqdm
 
             h5_candidates = [
                 os.path.join('data', 'shapes3d', '3dshapes.h5'),
@@ -372,7 +391,6 @@ class BMVC26Recognition(Recognition):
             if h5_path is None:
                 raise FileNotFoundError("No se encontró '3dshapes.h5'. Colócalo en 'data/shapes3d/3dshapes.h5'.")
 
-            latent_unit = int(self.model.model.diffusion_model.latent_unit)
             print(f'Generating {self.database} representations (.npz) from checkpoint using {h5_path}...')
 
             with h5py.File(h5_path, 'r') as f:
@@ -398,10 +416,95 @@ class BMVC26Recognition(Recognition):
                         cond = torch.stack(cond.chunk(latent_unit, dim=1), dim=1)
                         latents_arr[chunk_start + b_start:chunk_start + b_end] = cond.detach().cpu().numpy()
 
-            os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
-            global_step = getattr(self, 'ckpt_global_step', 0)
-            np.savez(filename, latents=latents_arr, num_samples=np.array(global_step))
-            print(f'Saved generated representations to: {filename} | shape={latents_arr.shape}')
+        elif self.database == 'celeba':
+            from torchvision import transforms
+
+            celeba_candidates = [
+                os.path.join('data', 'celeba'),
+                '/home/database/recognition/faces/celeba',
+            ]
+            celeba_root = next(
+                (p for p in celeba_candidates if os.path.isfile(os.path.join(p, 'list_attr_celeba.txt')) and os.path.isdir(os.path.join(p, 'images'))),
+                None
+            )
+            if celeba_root is None:
+                raise FileNotFoundError(
+                    " Complete CelebA not found. Ensure having 'list_attr_celeba.txt', "
+                    "'list_bbox_celeba.txt' in the directory 'images/' inside 'data/celeba/'."
+                )
+
+            image_dir = os.path.join(celeba_root, 'images')
+            attr_path = os.path.join(celeba_root, 'list_attr_celeba.txt')
+            bbox_path = os.path.join(celeba_root, 'list_bbox_celeba.txt')
+
+            with open(attr_path, 'r') as f:
+                lines = [line.strip() for line in f if line.strip()]
+            declared_num = int(lines[0])
+            filenames = [line.split()[0] for line in lines[2:]]
+            if len(filenames) != declared_num:
+                raise ValueError(f"Cabecera: {declared_num} imágenes, leídas: {len(filenames)}")
+
+            with open(bbox_path, 'r') as f:
+                bbox_lines = [line.strip() for line in f if line.strip()]
+            declared_bbox_num = int(bbox_lines[0])
+            if declared_bbox_num != declared_num:
+                raise ValueError(f"El número de muestras en bbox ({declared_bbox_num}) no coincide con attr ({declared_num}).")
+
+            bboxes = {}
+            for line in bbox_lines[2:]:
+                parts = line.split()
+                bboxes[parts[0]] = (int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4]))
+
+            bbox_margin = 0.30
+            image_size = 64
+            resize_center = transforms.Resize(int(round(image_size * 1.2)))
+            center_crop = transforms.CenterCrop(image_size)
+            final_transform = transforms.Compose([
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+            ])
+
+            def _load_and_crop_celeba(fname):
+                img_path = os.path.join(image_dir, fname)
+                img = Image.open(img_path).convert('RGB')
+                try:
+                    x1, y1, w, h = bboxes[fname]
+                    if w <= 0 or h <= 0:
+                        raise ValueError("Invalid bbox")
+                    margin_x = int(round(w * bbox_margin))
+                    margin_y = int(round(h * bbox_margin))
+                    img_w, img_h = img.size
+                    crop_x1 = max(0, x1 - margin_x)
+                    crop_y1 = max(0, y1 - margin_y)
+                    crop_x2 = min(img_w, x1 + w + margin_x)
+                    crop_y2 = min(img_h, y1 + h + margin_y)
+                    if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
+                        raise ValueError("Invalid cropped bbox")
+                    img = img.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+                except Exception:
+                    img = center_crop(resize_center(img))
+                return final_transform(img)
+
+            print(f'Generating {self.database} representations (.npz) from checkpoint using {image_dir} (online bbox crop)...')
+            num_samples = len(filenames)
+            latents_arr = np.empty((num_samples, latent_unit, int(self.ndims)), dtype=np.float32)
+
+            for b_start in tqdm(range(0, num_samples, batch_size), desc='Extracting latents (CelebA)', file=sys.stdout):
+                b_end = min(b_start + batch_size, num_samples)
+                batch_files = filenames[b_start:b_end]
+                x = torch.stack([_load_and_crop_celeba(fn) for fn in batch_files], dim=0).to(self.device, dtype=torch.float32)
+
+                cond = self.model.cond_stage_model(x)
+                if isinstance(cond, (tuple, list)):
+                    cond = cond[0]
+                cond = torch.stack(cond.chunk(latent_unit, dim=1), dim=1)
+                latents_arr[b_start:b_end] = cond.detach().cpu().numpy()
+
+        os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
+        global_step = getattr(self, 'ckpt_global_step', 0)
+        np.savez(filename, latents=latents_arr, num_samples=np.array(global_step))
+        print(f'Saved generated representations to: {filename} | shape={latents_arr.shape}')
 
     def load(self, mode):
         print('Load model representations')
@@ -410,15 +513,15 @@ class BMVC26Recognition(Recognition):
 
         config_path, ckpt_path = self._resolve_config_and_ckpt(path)
         if ckpt_path is None:
-            raise FileNotFoundError(f"No se encontró ningún checkpoint (.ckpt) en {path}")
+            raise FileNotFoundError(f"No checkpoint (.ckpt) found in {path}")
 
         # 1. Load the model from .ckpt
         self._load_generative_model(config_path, ckpt_path)
 
-        # 2. Generate the.npz
+        # 2. Generate the .npz from .ckpt
         default_npz = ('epoch=000000.npz' if self.nlats == 6 and self.ndims == 32 else 'epoch=000010.npz') if self.database == 'shapes3d' else self.database + '_representations.npz'
         filename = os.path.join(path, default_npz)
-        if self.database == 'shapes3d':
+        if self.database in ('shapes3d', 'celeba'):
             self._generate_representations_npz(filename)
         elif not os.path.isfile(filename):
             npzs = glob.glob(os.path.join(path, '*.npz'))

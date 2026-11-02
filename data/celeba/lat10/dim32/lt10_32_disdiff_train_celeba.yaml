@@ -1,0 +1,121 @@
+model:
+  base_learning_rate: 0.0001
+  target: ldm.models.diffusion.ddpm.LatentDiffusion
+  params:
+    linear_start: 0.0015
+    linear_end: 0.0155
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+    loss_type: l2
+    first_stage_key: image
+    cond_stage_key: image
+    image_size: 16
+    channels: 10
+    cond_stage_trainable: true
+    concat_mode: false
+    scale_by_std: true
+    conditioning_key: adm
+    monitor: train/loss_step
+    dis_loss_flag: true
+    scheduler_config:
+      target: ldm.lr_scheduler.LambdaLinearScheduler
+      params:
+        warm_up_steps:
+        - 800
+        cycle_lengths:
+        - 10000000000000
+        f_start:
+        - 1.0e-06
+        f_max:
+        - 1.0
+        f_min:
+        - 1.0
+    unet_config:
+      target: ldm.modules.diffusionmodules.openaimodel_shift.UNetModel
+      params:
+        image_size: 16
+        in_channels: 10
+        out_channels: 10
+        model_channels: 64
+        attention_resolutions:
+        - 1
+        - 2
+        - 4
+        num_res_blocks: 2
+        channel_mult:
+        - 1
+        - 2
+        - 4
+        - 4
+        num_heads: 8
+        repre_emb_channels: 32
+        use_scale_shift_norm: true
+        resblock_updown: true
+        seprate_decoder: true
+        orth_emb: true
+        ckpt_path: "disdiff/pretrained_models/celeba/ldm.ckpt"
+        load_ema_ckpt: true
+        latent_unit: 10
+    first_stage_config:
+      target: ldm.models.autoencoder.VQModelInterface
+      params:
+        embed_dim: 10
+        n_embed: 2048
+        monitor: val/rec_loss
+        ckpt_path: "disdiff/pretrained_models/celeba/autoencoder.ckpt"
+        ddconfig:
+          double_z: false
+          z_channels: 10
+          resolution: 64
+          in_channels: 3
+          out_ch: 3
+          ch: 64
+          ch_mult:
+          - 1
+          - 2
+          - 4
+          num_res_blocks: 2
+          attn_resolutions: []
+          dropout: 0.0
+        lossconfig:
+          target: torch.nn.Identity
+    cond_stage_config:
+      target: ldm.modules.encoders.modules.Encoder4
+      params:
+        d: 128
+        latent_dim: 320
+    dis_loss_type: Z
+    dis_weight: 0.05
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 128
+    num_workers: 4
+    train:
+      target: ldm.data.dis.CelebAEntireDataset
+    test:
+      target: ldm.data.dis.CelebAEntireDataset
+
+lightning:
+  modelcheckpoint: # We save the top model and the last one. 
+    params:
+      monitor: "train/loss_step"
+      mode: "min"
+      save_top_k: 1
+      save_last: True
+  callbacks:
+    image_logger:
+      target: main.ImageLogger
+      params:
+        batch_frequency: 10000
+        max_images: 16
+        increase_log_steps: false
+        log_images_kwargs:
+          inpaint: false
+          plot_diffusion_rows: false
+          plot_progressive_rows: false
+          plot_swapped_concepts: true
+          plot_decoded_xstart: false
+  trainer:
+    benchmark: True

@@ -4,6 +4,7 @@
 data/**/*.h5
 data/**/lat*/**/*.ckpt
 data/**/lat*/**/*.npz
+data/**/images/*.jpg
 
 __pycache__/
 *.pyc

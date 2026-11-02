@@ -55,6 +55,20 @@ def load_annotations(source, ref):
             anns.append(seq)
     return anns
 
+def load_celeba_labels_local(attr_path, factor_names):
+    with open(attr_path, "r") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    all_attr_names = lines[1].split()
+    attr_to_idx = {a: i for i, a in enumerate(all_attr_names)}
+    selected_cols = [attr_to_idx[a] for a in factor_names]
+    labels = []
+    for line in lines[2:]:
+        parts = line.split()
+        raw_attrs = [int(x) for x in parts[1:]]
+        y = [raw_attrs[c] for c in selected_cols]
+        labels.append(((np.array(y, dtype=np.int64) + 1) // 2).astype(np.int64))
+    return np.asarray(labels, dtype=np.int64)
+
 
 def main():
     """
@@ -72,12 +86,14 @@ def main():
     # Load full-dataset latents and labels
     # =========================
     composite.load(Modes.TRAIN)
-    anns = load_annotations(Sources.HUGFACE, sr.database)
-    labels = np.asarray([[int(cat.label.name) for cat in ann.images[0].objects[0].categories] if sr.database == 'shapes3d' else [int(ann.images[0].objects[0].has_category(factor)) for factor in sr.factor_names] for ann in anns], dtype=np.int64)
     if sr.database == 'shapes3d':
-        # Sort rows to the 3dshapes.h5 order (floor, object, orientation, scale, shape, wall)
+        anns = load_annotations(Sources.HUGFACE, sr.database)
+        labels = np.asarray([[int(cat.label.name) for cat in ann.images[0].objects[0].categories] for ann in anns], dtype=np.int64)
         labels = labels[:, [0, 5, 1, 3, 4, 2]]
         labels = labels[np.lexsort(labels.T[::-1])]
+    elif sr.database == 'celeba':
+        labels = load_celeba_labels_local('data/celeba/list_attr_celeba.txt', sr.factor_names)
+        anns = []
     nsamples = sr.latents.shape[0]
     if len(labels) != nsamples:
         raise ValueError(f"Number of global labels ({len(labels)}) does not match number of latent samples ({nsamples}).")
