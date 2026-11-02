@@ -3,6 +3,7 @@
 *.h5
 data/**/*.h5
 data/**/lat*/**/*.ckpt
+data/**/**/**/*.pt
 data/**/lat*/**/*.npz
 data/**/images/*.jpg
 

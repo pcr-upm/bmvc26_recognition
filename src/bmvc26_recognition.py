@@ -119,6 +119,85 @@ def validate_fixed_slots(fixed_slots, latent_unit):
             raise ValueError(f"Slot {slot} is invalid. Valid range is [0, {latent_unit - 1}].")
 
 
+import torch.nn as nn
+import torchvision.models as models
+from sklearn.metrics import precision_score, recall_score, f1_score
+
+
+class ResNetMultiTask(nn.Module):
+    def __init__(self, backbone_name="resnet18", pretrained=False, repr_dim=320, task_names=None, num_classes=None):
+        super().__init__()
+        if task_names is None:
+            task_names = ["floor_hue", "wall_hue", "object_hue", "scale", "shape", "orientation"]
+        if num_classes is None:
+            num_classes = [10, 10, 10, 8, 4, 15]
+        self.task_names = task_names
+        self.num_classes = num_classes
+        try:
+            backbone = models.resnet18(weights=None)
+        except TypeError:
+            backbone = models.resnet18(pretrained=pretrained)
+        backbone_dim = backbone.fc.in_features
+        backbone.fc = nn.Identity()
+        self.backbone = backbone
+        self.proj = nn.Identity() if repr_dim == backbone_dim else nn.Linear(backbone_dim, repr_dim)
+        self.feat_dim = repr_dim
+        self.heads = nn.ModuleDict({t: nn.Linear(self.feat_dim, c) for t, c in zip(task_names, num_classes)})
+
+    def load_state_dict(self, state_dict, strict=True):
+        # Mapeo automático de claves antiguas/alternativas del state_dict de ResNet
+        new_state_dict = {}
+        mapping = {
+            'head_floor': 'heads.floor_hue',
+            'head_wall': 'heads.wall_hue',
+            'head_object': 'heads.object_hue',
+            'head_scale': 'heads.scale',
+            'head_shape': 'heads.shape',
+            'head_orientation': 'heads.orientation'
+        }
+        for k, v in state_dict.items():
+            new_k = k
+            for old_p, new_p in mapping.items():
+                if old_p in k:
+                    new_k = k.replace(old_p, new_p)
+                    break
+            new_state_dict[new_k] = v
+        return super().load_state_dict(new_state_dict, strict=False)
+
+    def forward(self, x):
+        features = self.proj(self.backbone(x))
+        logits = {t: self.heads[t](features) for t in self.task_names}
+        return logits, features
+
+
+class SimCLRResNet18(nn.Module):
+    def __init__(self, repr_dim=320, proj_dim=128, hidden_dim=320, small_resnet_stem=True):
+        super().__init__()
+        try:
+            backbone = models.resnet18(weights=None)
+        except TypeError:
+            backbone = models.resnet18(pretrained=False)
+        if small_resnet_stem:
+            backbone.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+            backbone.maxpool = nn.Identity()
+        backbone_dim = backbone.fc.in_features
+        backbone.fc = nn.Identity()
+        self.backbone = backbone
+        self.repr_proj = nn.Identity() if repr_dim == backbone_dim else nn.Linear(backbone_dim, repr_dim)
+        self.projection_head = nn.Sequential(
+            nn.Linear(repr_dim, hidden_dim, bias=False),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, proj_dim, bias=False),
+            nn.BatchNorm1d(proj_dim, affine=False),
+        )
+
+    def forward(self, x, return_features=False):
+        h = self.repr_proj(self.backbone(x))
+        if return_features:
+            return h
+        return F.normalize(self.projection_head(h), dim=1)
+
 class BMVC26Recognition(Recognition):
     """
     On Structured Disentangled Representation and the Limits of Global Scores
@@ -521,7 +600,7 @@ class BMVC26Recognition(Recognition):
         # 2. Generate the .npz from .ckpt
         default_npz = ('epoch=000000.npz' if self.nlats == 6 and self.ndims == 32 else 'epoch=000010.npz') if self.database == 'shapes3d' else self.database + '_representations.npz'
         filename = os.path.join(path, default_npz)
-        if self.database in ('shapes3d', 'celeba'):
+        if not os.path.isfile(filename) and self.database in ('shapes3d', 'celeba'):
             self._generate_representations_npz(filename)
         elif not os.path.isfile(filename):
             npzs = glob.glob(os.path.join(path, '*.npz'))
@@ -685,3 +764,216 @@ class BMVC26Recognition(Recognition):
 
         plt.close(fig)
         return x_gen
+    
+    def _resolve_rep_dir_and_files(self, backbone, regime):
+        base_dir = os.path.join('data', self.database, backbone, regime)
+        os.makedirs(base_dir, exist_ok=True)
+        return base_dir
+
+    @torch.no_grad()
+    def _generate_discriminative_npz(self, backbone, ckpt_path, filename, batch_size=128):
+        from tqdm import tqdm
+        from torchvision import transforms
+
+        if self.device is None:
+            self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+        ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+        state_dict = ckpt.get('model_state_dict', ckpt.get('state_dict', ckpt)) if isinstance(ckpt, dict) else ckpt
+
+        if backbone == 'resnet':
+            t_names = ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation'] if self.database == 'shapes3d' else ['eyeglasses', 'male', 'wearing_hat', 'smiling', 'mustache', 'wearing_earrings']
+            n_cls = [10, 10, 10, 8, 4, 15] if self.database == 'shapes3d' else [2, 2, 2, 2, 2, 2]
+            model = ResNetMultiTask(backbone_name='resnet18', pretrained=False, repr_dim=320, task_names=t_names, num_classes=n_cls).to(self.device)
+        elif backbone == 'simclr':
+            repr_dim = ckpt.get('repr_dim', 320) if isinstance(ckpt, dict) else 320
+            proj_dim = ckpt.get('proj_dim', 128) if isinstance(ckpt, dict) else 128
+            stem = ckpt.get('small_resnet_stem', True) if isinstance(ckpt, dict) else True
+            model = SimCLRResNet18(repr_dim=repr_dim, proj_dim=proj_dim, hidden_dim=repr_dim, small_resnet_stem=stem).to(self.device)
+        else:
+            raise ValueError(f'Unsupported discriminative backbone: {backbone}')
+
+        model.load_state_dict(state_dict)
+        model.eval()
+
+        if self.database == 'shapes3d':
+            h5_candidates = [
+                os.path.join('data', 'shapes3d', '3dshapes.h5'),
+                os.path.expanduser('~/data/disentanglement_lib/shapes3d/3dshapes.h5'),
+                '/home/jelias/data/disentanglement_lib/shapes3d/3dshapes.h5',
+            ]
+            h5_path = next((p for p in h5_candidates if os.path.isfile(p)), None)
+            if h5_path is None:
+                raise FileNotFoundError("No se encontró '3dshapes.h5'. Colócalo en 'data/shapes3d/3dshapes.h5'.")
+
+            print(f'Generating {backbone} ({self.database}) representations (.npz) from {ckpt_path}...')
+            with h5py.File(h5_path, 'r') as f:
+                images_ds = f['images']
+                num_samples = len(images_ds)
+                feats_arr = np.empty((num_samples, 320), dtype=np.float32)
+                chunk_size = batch_size * 100
+                for chunk_start in tqdm(range(0, num_samples, chunk_size), desc=f'Extracting {backbone}', file=sys.stdout):
+                    chunk_end = min(chunk_start + chunk_size, num_samples)
+                    imgs_chunk = images_ds[chunk_start:chunk_end]
+                    for b_start in range(0, len(imgs_chunk), batch_size):
+                        b_end = min(b_start + batch_size, len(imgs_chunk))
+                        x = torch.from_numpy(imgs_chunk[b_start:b_end]).to(self.device, dtype=torch.float32)
+                        x = x.permute(0, 3, 1, 2).contiguous()
+                        x = (x / 255.0 - 0.5) / 0.5
+                        feats = model(x)[1] if backbone == 'resnet' else model(x, return_features=True)
+                        feats_arr[chunk_start + b_start:chunk_start + b_end] = feats.detach().cpu().numpy()
+
+        elif self.database == 'celeba':
+            celeba_candidates = [os.path.join('data', 'celeba'), '/home/database/recognition/faces/celeba']
+            celeba_root = next((p for p in celeba_candidates if os.path.isfile(os.path.join(p, 'list_attr_celeba.txt'))), None)
+            if celeba_root is None:
+                raise FileNotFoundError("No se encontró 'list_attr_celeba.txt' en 'data/celeba/'.")
+
+            attr_path = os.path.join(celeba_root, 'list_attr_celeba.txt')
+            with open(attr_path, 'r') as f:
+                lines = [line.strip() for line in f if line.strip()]
+            filenames = [line.split()[0] for line in lines[2:]]
+
+            cropped_dir = os.path.join(celeba_root, 'images_cropped_6464')
+            use_precrop = os.path.isdir(cropped_dir)
+            image_dir = cropped_dir if use_precrop else os.path.join(celeba_root, 'images')
+
+            bboxes = {}
+            if not use_precrop:
+                bbox_path = os.path.join(celeba_root, 'list_bbox_celeba.txt')
+                with open(bbox_path, 'r') as f:
+                    bbox_lines = [line.strip() for line in f if line.strip()]
+                for line in bbox_lines[2:]:
+                    parts = line.split()
+                    bboxes[parts[0]] = (int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4]))
+
+            bbox_margin = 0.30
+            image_size = 64
+            resize_center = transforms.Resize(int(round(image_size * 1.2)))
+            center_crop = transforms.CenterCrop(image_size)
+            tf_Pre = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+            tf_Online = transforms.Compose([transforms.Resize((image_size, image_size)), transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+
+            def _load_celeba_img(fname):
+                img = Image.open(os.path.join(image_dir, fname)).convert('RGB')
+                if use_precrop:
+                    return tf_Pre(img)
+                try:
+                    x1, y1, w, h = bboxes[fname]
+                    if w <= 0 or h <= 0:
+                        raise ValueError()
+                    mx, my = int(round(w * bbox_margin)), int(round(h * bbox_margin))
+                    iw, ih = img.size
+                    cx1, cy1, cx2, cy2 = max(0, x1 - mx), max(0, y1 - my), min(iw, x1 + w + mx), min(ih, y1 + h + my)
+                    if cx2 <= cx1 or cy2 <= cy1:
+                        raise ValueError()
+                    img = img.crop((cx1, cy1, cx2, cy2))
+                except Exception:
+                    img = center_crop(resize_center(img))
+                return tf_Online(img)
+
+            print(f'Generating {backbone} (celeba) representations (.npz) from {ckpt_path} using {image_dir}...')
+            num_samples = len(filenames)
+            feats_arr = np.empty((num_samples, 320), dtype=np.float32)
+            for b_start in tqdm(range(0, num_samples, batch_size), desc=f'Extracting {backbone} (CelebA)', file=sys.stdout):
+                b_end = min(b_start + batch_size, num_samples)
+                x = torch.stack([_load_celeba_img(fn) for fn in filenames[b_start:b_end]], dim=0).to(self.device, dtype=torch.float32)
+                feats = model(x)[1] if backbone == 'resnet' else model(x, return_features=True)
+                feats_arr[b_start:b_end] = feats.detach().cpu().numpy()
+
+        os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
+        np.savez(filename, features=feats_arr)
+        print(f'Saved generated representations to: {filename} | shape={feats_arr.shape}')
+
+    def load_full_representation(self, backbone, regime):
+        base_dir = self._resolve_rep_dir_and_files(backbone, regime)
+
+        # Soporta .npz pre-extraídos por split si existen en la carpeta
+        split_train_npz = os.path.join(base_dir, 'train_unbiased_representations.npz')
+        split_test_npz = os.path.join(base_dir, 'test_fixed_representations.npz')
+        if os.path.isfile(split_train_npz) and os.path.isfile(split_test_npz):
+            d_tr = np.load(split_train_npz, allow_pickle=True)
+            d_te = np.load(split_test_npz, allow_pickle=True)
+            k_tr = 'features' if 'features' in d_tr else ('latents' if 'latents' in d_tr else list(d_tr.keys())[0])
+            k_te = 'features' if 'features' in d_te else ('latents' if 'latents' in d_te else list(d_te.keys())[0])
+            x_tr = d_tr[k_tr].reshape(d_tr[k_tr].shape[0], -1)
+            x_te = d_te[k_te].reshape(d_te[k_te].shape[0], -1)
+            return x_tr, x_te
+
+        npz_path = os.path.join(base_dir, f'{backbone}_{self.database}_{regime}_representations.npz')
+        if not os.path.isfile(npz_path):
+            existing_npzs = glob.glob(os.path.join(base_dir, '*.npz'))
+            if existing_npzs:
+                npz_path = existing_npzs[0]
+            elif backbone == 'disdiff':
+                self.nlats, self.ndims = 10, 32
+                config_path, ckpt_path = self._resolve_config_and_ckpt(base_dir)
+                if config_path is None:
+                    fallback_dir = os.path.join('data', self.database, 'lat10', 'dim32')
+                    config_path, _ = self._resolve_config_and_ckpt(fallback_dir)
+                if ckpt_path is None:
+                    raise FileNotFoundError(f"No se encontró checkpoint (.ckpt) de DisDiff ({regime}) en {base_dir}")
+                self._load_generative_model(config_path, ckpt_path)
+                self._generate_representations_npz(npz_path)
+            else:
+                ckpts = glob.glob(os.path.join(base_dir, '*.pt')) + glob.glob(os.path.join(base_dir, '*.ckpt'))
+                if not ckpts:
+                    raise FileNotFoundError(f"No se encontró checkpoint (.pt/.ckpt) de {backbone} ({regime}) en {base_dir}")
+                self._generate_discriminative_npz(backbone, ckpts[0], npz_path)
+
+        data = np.load(npz_path, allow_pickle=True)
+        key = next((k for k in ('latents', 'features', 'z', 'representations') if k in data.files), data.files[0])
+        all_feats = data[key]
+        all_feats = all_feats.reshape(all_feats.shape[0], -1)
+
+        train_idx_path = os.path.join('splits', self.database, 'train_unbiased.npy')
+        test_idx_path = os.path.join('splits', self.database, 'test_fixed.npy')
+        if not os.path.isfile(test_idx_path):
+            test_idx_path = os.path.join('splits', self.database, 'valid.npy')
+
+        train_idx = np.load(train_idx_path).astype(np.int64)
+        test_idx = np.load(test_idx_path).astype(np.int64)
+        return all_feats[train_idx], all_feats[test_idx]
+
+    def evaluate_full_representation(self, x_train_full, y_train_full, x_test_full, y_test_full, samples_per_class=25, seed=23):
+        num_classes_list = [10, 10, 10, 8, 4, 15] if self.database == 'shapes3d' else [2, 2, 2, 2, 2, 2]
+        factor_accs = {}
+        shape_class_metrics = {}
+
+        for j, factor_name in enumerate(self.factor_names):
+            num_classes = num_classes_list[j]
+            y_tr_f = y_train_full[:, j]
+            y_te_f = y_test_full[:, j]
+
+            rng = np.random.default_rng(seed)
+            selected = []
+            for cid in range(num_classes):
+                pos = np.flatnonzero(y_tr_f == cid)
+                selected.append(rng.choice(pos, size=samples_per_class, replace=False))
+            selected = np.concatenate(selected)
+            rng.shuffle(selected)
+
+            scaler = StandardScaler()
+            x_tr_sub = scaler.fit_transform(x_train_full[selected])
+            x_te_eval = scaler.transform(x_test_full)
+            y_tr_sub = y_tr_f[selected]
+
+            clf = LinearSVC(C=1.0, random_state=seed, dual=False, max_iter=5000)
+            clf.fit(x_tr_sub, y_tr_sub)
+            y_pred = clf.predict(x_te_eval)
+
+            factor_accs[self.columns[j]] = float(accuracy_score(y_te_f, y_pred)) * 100.0
+
+            if self.database == 'shapes3d' and factor_name == 'shape':
+                labels_ids = [0, 1, 2, 3]
+                prec = precision_score(y_te_f, y_pred, labels=labels_ids, average=None, zero_division=0)
+                rec = recall_score(y_te_f, y_pred, labels=labels_ids, average=None, zero_division=0)
+                f1 = f1_score(y_te_f, y_pred, labels=labels_ids, average=None, zero_division=0)
+                for cid, cname in enumerate(['Cube', 'Cylinder', 'Sphere', 'Capsule']):
+                    shape_class_metrics[cname] = {
+                        'Prec.': float(prec[cid]) * 100.0,
+                        'Rec.': float(rec[cid]) * 100.0,
+                        'F1': float(f1[cid]) * 100.0,
+                    }
+
+        return factor_accs, shape_class_metrics
