@@ -9,6 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__f
 import torch
 import torchinfo
 import importlib
+import contextlib
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
@@ -34,6 +35,7 @@ class BMVC26Recognition(Recognition):
         self.device = None
         self.nlats = None
         self.ndims = None
+        self.slots = None
 
     def parse_options(self, params):
         super().parse_options(params)
@@ -45,6 +47,8 @@ class BMVC26Recognition(Recognition):
                             help='The number of latent units.')
         parser.add_argument('--ndims', type=int, default=32, 
                             help='The dimensionality of the latent space.')
+        parser.add_argument('--slot', dest='slot', type=int, action='append', default=[1, 2],
+                            help='Latent unit indices to keep fixed.')
         args, unknown = parser.parse_known_args(params)
         print(parser.format_usage())
         mode_gpu = torch.cuda.is_available() and -1 not in args.gpu
@@ -52,6 +56,7 @@ class BMVC26Recognition(Recognition):
         self.device = torch.device('cuda' if mode_gpu else 'cpu')
         self.nlats = int(args.nlats)
         self.ndims = int(args.ndims)
+        self.slots = args.slot
         if self.database == 'shapes3d':
             self.factor_names = ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']
             self.columns = ['Flo', 'Wal', 'Obj', 'Scl', 'Shp', 'Ori']
@@ -149,4 +154,53 @@ class BMVC26Recognition(Recognition):
         torchinfo.summary(self.model, input_size=[(1, latent_channels, latent_size, latent_size), (1, image_channels, image_size, image_size)], depth=3, device=self.device.type, col_names=['input_size', 'output_size', 'num_params', 'kernel_size'])
 
     def process(self, ann, pred):
+        def denorm_img(x):
+            x = x.detach().cpu()
+            x = (x + 1.0) / 2.0
+            x = x.clamp(0, 1)
+            x = x.permute(1, 2, 0).numpy()
+            return x
+
+        def get_ema_context(model):
+            if hasattr(model, "ema_scope"):
+                return model.ema_scope("custom-grid")
+            return contextlib.nullcontext()
+
+        @torch.no_grad()
+        def sample_in_batches(cond_flat):
+            outputs = []
+            sample_batch_size = 8
+            ddim_steps = 200
+            ddim_eta = 1.0
+            for start in range(0, cond_flat.shape[0], sample_batch_size):
+                chunk = cond_flat[start:start + sample_batch_size]
+                samples, _ = self.model.sample_log(cond=chunk, batch_size=chunk.shape[0], ddim=True, ddim_steps=ddim_steps, eta=ddim_eta)
+                x_samples = self.model.decode_first_stage(samples)
+                outputs.append(x_samples)
+            return torch.cat(outputs, dim=0)
+
         print('Process image')
+        ref_idx = 176977 
+        c_orig_split = torch.from_numpy(ann[ref_idx:ref_idx+1]).float().to(self.device)
+        c_orig_split = c_orig_split.reshape(1, self.model.model.diffusion_model.latent_unit, self.ndims)
+        with get_ema_context(self.model):
+            x_ref = sample_in_batches(c_orig_split.reshape(1, -1))
+        pred.append(denorm_img(x_ref[0]))
+        n_generations = 20
+        available = [i for i in range(len(ann)) if i not in set({int(ref_idx)})]
+        if not available:
+            raise ValueError("No available dataset indices after applying forbidden set.")
+        rng = np.random.default_rng(42)
+        rand_indices = rng.choice(available, size=n_generations, replace=n_generations>len(available)).tolist()
+        random_splits = torch.from_numpy(ann[rand_indices]).float().to(self.device)
+        random_splits = random_splits.reshape(-1, self.model.model.diffusion_model.latent_unit, self.ndims)
+        mixed = random_splits.clone()        
+        for slot in self.slots:
+            if slot < 0 or slot >= self.model.model.diffusion_model.latent_unit:
+                raise ValueError(f"Slot {slot} is invalid. Valid range is [0, {self.model.model.diffusion_model.latent_unit-1}].")
+            mixed[:, slot, :] = c_orig_split[0, slot, :].unsqueeze(0).expand(mixed.shape[0], -1)
+        mixed_cond_flat = mixed.reshape(mixed.shape[0], -1)
+        with get_ema_context(self.model):
+            x_gen = sample_in_batches(mixed_cond_flat)
+        for idx in range(x_gen.shape[0]):
+            pred.append(denorm_img(x_gen[idx]))
