@@ -33,4 +33,4 @@ ENV PATH=/home/username/conda/envs/bmvc26/bin:/home/username/conda/bin:${PATH}
 # Make RUN commands use the new environment (source activate bmvc26)
 SHELL ["conda", "run", "-n", "bmvc26", "/bin/bash", "-c"]
 # Install dependencies
-RUN conda run -n bmvc26 pip install pcr-framework pandas tqdm scikit-learn torch datasets "tensorflow==2.15.1" "keras>=2.15,<2.16" "numpy==1.26.4" "gin-config==0.4.0"
+RUN conda run -n bmvc26 pip install pcr-framework pandas tqdm scikit-learn omegaconf einops torch torchvision torchinfo pytorch-lightning datasets taming-transformers-rom1504 clip kornia "tensorflow==2.15.1" "keras>=2.15,<2.16" "numpy==1.26.4" "gin-config==0.4.0"

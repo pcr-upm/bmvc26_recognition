@@ -78,20 +78,28 @@ def main():
         # Sort rows to the 3dshapes.h5 order (floor, object, orientation, scale, shape, wall)
         labels = labels[:, [0, 5, 1, 3, 4, 2]]
         labels = labels[np.lexsort(labels.T[::-1])]
-    nsamples = sr.latents.shape[0]
+    # Load latents from .npz file
+    path = sr.path + 'data/' + sr.database + '/lat' + str(sr.nlats) + '/dim' + str(sr.ndims)
+    filename = os.path.join(path, ('epoch=000000.npz' if sr.nlats == 6 and sr.ndims == 32 else 'epoch=000010.npz') if sr.database == 'shapes3d' else sr.database + '_representations.npz')
+    print(f"Latents .npz file: {filename}")
+    data = np.load(filename, allow_pickle=True)
+    print(f"NPZ keys: {data.files}")
+    latents = data['latents' if 'latents' in data else list(data.keys())[0]]
+    print('Latents shape:', latents.shape)
+    nsamples = latents.shape[0]
     if len(labels) != nsamples:
         raise ValueError(f"Number of global labels ({len(labels)}) does not match number of latent samples ({nsamples}).")
     # =========================
     # Build train/test sets from the full representation
     # =========================
     if sr.database == 'shapes3d':
-        x_train = sr.latents[sr.train_indices]
-        x_valid = sr.latents[sr.valid_indices]
+        x_train = latents[sr.train_indices]
+        x_valid = latents[sr.valid_indices]
         y_train = labels[sr.train_indices]
         y_valid = labels[sr.valid_indices]
     elif sr.database == 'celeba':
-        x_train = sr.latents
-        x_valid = sr.latents
+        x_train = latents
+        x_valid = latents
         y_train = labels
         y_valid = labels
     composite.train((x_train, y_train), (x_valid, y_valid))

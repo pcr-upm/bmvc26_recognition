@@ -7,14 +7,18 @@ import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
 import torch
+import torchinfo
+import importlib
 import numpy as np
 import pandas as pd
+from omegaconf import OmegaConf
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from sklearn.metrics import accuracy_score
 from ground_truth.shapes3d import Dataset
 from pcr_framework.src.recognition import Recognition
 from src.evaluate import eval_func
+from ldm.modules.diffusionmodules.openaimodel_shift import UNetModel
 np.random.seed(42)
 
 
@@ -25,20 +29,27 @@ class BMVC26Recognition(Recognition):
     def __init__(self, path):
         super().__init__()
         self.path = path
+        self.model = None
+        self.gpus = None
+        self.device = None
         self.nlats = None
         self.ndims = None
-        self.latents = None
 
     def parse_options(self, params):
         super().parse_options(params)
         import argparse
         parser = argparse.ArgumentParser(prog='BMVC26Recognition', add_help=False)
+        parser.add_argument('--gpu', dest='gpu', type=int, action='append',
+                            help='GPU ID (negative value indicates CPU).')
         parser.add_argument('--nlats', type=int, default=10, 
                             help='The number of latent units.')
         parser.add_argument('--ndims', type=int, default=32, 
                             help='The dimensionality of the latent space.')
         args, unknown = parser.parse_known_args(params)
         print(parser.format_usage())
+        mode_gpu = torch.cuda.is_available() and -1 not in args.gpu
+        self.gpus = args.gpu
+        self.device = torch.device('cuda' if mode_gpu else 'cpu')
         self.nlats = int(args.nlats)
         self.ndims = int(args.ndims)
         if self.database == 'shapes3d':
@@ -107,27 +118,35 @@ class BMVC26Recognition(Recognition):
                 print(f"  disentanglement: {dci.get('disentanglement')}")
 
     def load(self, mode):
-        def get_latent_key(npz_data, requested_key=None):
-            if requested_key is not None:
-                if requested_key not in npz_data:
-                    raise KeyError(f"Requested latent key '{requested_key}' not found. Available keys: {list(npz_data.keys())}.")
-                return requested_key
-            candidate_keys = ['latents', 'z', 'features', 'representations']
-            for key in candidate_keys:
-                if key in npz_data:
-                    return key
-            raise KeyError(f"No latent key found in .npz. Expected one of: {candidate_keys}. Available keys: {list(npz_data.keys())}.")
-
         print('Load model')
-        path = 'data/' + self.database + '/lat' + str(self.nlats) + '/dim' + str(self.ndims)
-        filename = os.path.join(path, ('epoch=000000.npz' if self.nlats == 6 and self.ndims == 32 else 'epoch=000010.npz') if self.database == 'shapes3d' else self.database + '_representations.npz')
-        print(f"Model: {filename}")
-        data = np.load(filename, allow_pickle=True)
-        print(f"NPZ keys: {data.files}")
-        self.latents = data[get_latent_key(data, 'latents')]
-        print('Latents shape:', self.latents.shape)
-        if self.latents.ndim != 3:
-            raise ValueError(f'Expected latents with shape (N, K, D), got {self.latents.shape}')
+        path = self.path + 'data/' + self.database + '/lat' + str(self.nlats) + '/dim' + str(self.ndims)
+        filename = os.path.join(path, 'lt' + str(self.nlats) + '_' + str(self.ndims) + '_disdiff_train' + ('' if self.database == 'shapes3d' else '_celeba') + '.yaml')
+        print(f"Config .yaml file: {filename}")
+        config = OmegaConf.load(filename)
+        _orig_unet_init_model = UNetModel.init_model
+        UNetModel.init_model = lambda self: (_orig_unet_init_model(self) if getattr(self, 'ckpt_path', None) is not None and os.path.isfile(str(self.ckpt_path)) else None)
+        module, cls = config.model["target"].rsplit(".", 1)
+        self.model = getattr(importlib.import_module(module), cls)(**config.model.get("params", {}))
+        filename = os.path.join(path, 'last.ckpt')
+        print(f"Model .ckpt file: {filename}")
+        ckpt = torch.load(filename, map_location='cpu', weights_only=False)
+        self.ckpt_global_step = int(ckpt.get('global_step', 0)) if isinstance(ckpt, dict) else 0
+        state_dict = ckpt['state_dict'] if 'state_dict' in ckpt else ckpt
+        missing, _ = self.model.load_state_dict(state_dict, strict=False)
+        if hasattr(self.model, 'model_ema') and hasattr(self.model.model_ema, 'm_name2s_name'):
+            missing_set = set(missing)
+            with torch.no_grad():
+                for name, p in self.model.model.named_parameters():
+                    s_name = self.model.model_ema.m_name2s_name.get(name)
+                    if s_name and f'model_ema.{s_name}' in missing_set and hasattr(self.model.model_ema, s_name):
+                        getattr(self.model.model_ema, s_name).copy_(p.data)
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        latent_channels = config.model.params.channels
+        latent_size = config.model.params.image_size
+        image_channels = config.model.params.first_stage_config.params.ddconfig.in_channels
+        image_size = config.model.params.first_stage_config.params.ddconfig.resolution
+        torchinfo.summary(self.model, input_size=[(1, latent_channels, latent_size, latent_size), (1, image_channels, image_size, image_size)], depth=3, device=self.device.type, col_names=['input_size', 'output_size', 'num_params', 'kernel_size'])
 
     def process(self, ann, pred):
         print('Process image')
