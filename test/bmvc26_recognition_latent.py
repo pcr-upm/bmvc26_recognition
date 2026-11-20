@@ -13,20 +13,6 @@ from pcr_framework.src.composite import Composite
 from src.bmvc26_recognition import BMVC26Recognition
 
 
-def parse_options():
-    """
-    Parse options from command line.
-    """
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--show-viewer', '-v', dest='show_viewer', action="store_true",
-                        help='Show results visually.')
-    args, unknown = parser.parse_known_args()
-    print(parser.format_usage())
-    show_viewer = args.show_viewer
-    return unknown, show_viewer
-
-
 def load_annotations(source, ref):
     """
     Load ground-truth annotations from the specified database source.
@@ -63,15 +49,14 @@ def main():
     # =========================
     # Load computer vision components
     # =========================
-    unknown, show_viewer = parse_options()
     composite = Composite()
     sr = BMVC26Recognition('')
     composite.add(sr)
-    composite.parse_options(unknown)
+    composite.parse_options(None)
+    composite.load(Modes.TRAIN)
     # =========================
     # Load full-dataset latents and labels
     # =========================
-    composite.load(Modes.TRAIN)
     anns = load_annotations(Sources.HUGFACE, sr.database)
     labels = np.asarray([[int(cat.label.name) for cat in ann.images[0].objects[0].categories] if sr.database == 'shapes3d' else [int(ann.images[0].objects[0].has_category(factor)) for factor in sr.factor_names] for ann in anns], dtype=np.int64)
     if sr.database == 'shapes3d':
@@ -86,23 +71,12 @@ def main():
     print(f"NPZ keys: {data.files}")
     latents = data['latents' if 'latents' in data else list(data.keys())[0]]
     print('Latents shape:', latents.shape)
-    nsamples = latents.shape[0]
-    if len(labels) != nsamples:
-        raise ValueError(f"Number of global labels ({len(labels)}) does not match number of latent samples ({nsamples}).")
+    if len(labels) != latents.shape[0]:
+        raise ValueError(f"Number of global labels ({len(labels)}) does not match number of latent samples ({latents.shape[0]}).")
     # =========================
-    # Build train/test sets from the full representation
+    # Latent-unit probing
     # =========================
-    if sr.database == 'shapes3d':
-        x_train = latents[sr.train_indices]
-        x_valid = latents[sr.valid_indices]
-        y_train = labels[sr.train_indices]
-        y_valid = labels[sr.valid_indices]
-    elif sr.database == 'celeba':
-        x_train = latents
-        x_valid = latents
-        y_train = labels
-        y_valid = labels
-    composite.train((x_train, y_train), (x_valid, y_valid))
+    sr.train(None, None, (latents, labels))
     print('End of bmvc26_recognition_latent')
 
 

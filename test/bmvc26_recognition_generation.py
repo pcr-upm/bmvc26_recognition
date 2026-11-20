@@ -6,12 +6,14 @@ __email__ = 'roberto.valle@upm.es'
 import os
 import sys
 sys.path.append(os.getcwd())
+import copy
 import numpy as np
-import matplotlib.pyplot as plt
 import importlib.util
 from pathlib import Path
 from pcr_framework.src.constants import Modes
 from pcr_framework.src.composite import Composite
+from pcr_framework.src.annotations import GenericVideo, GenericImage
+from pcr_framework.src.viewer import Viewer
 from src.bmvc26_recognition import BMVC26Recognition
 
 
@@ -29,7 +31,7 @@ def parse_options():
                         help='Save processed images.')
     args, unknown = parser.parse_known_args()
     print(parser.format_usage())
-    input_data = args.input_data
+    input_data = int(args.input_data)
     show_viewer = args.show_viewer
     save_image = args.save_image
     return unknown, input_data, show_viewer, save_image
@@ -50,6 +52,7 @@ def main():
     composite.load(Modes.TEST)
     spec = importlib.util.find_spec('pcr_framework')
     output_path = os.path.join('pcr_framework' if spec is None else os.path.dirname(spec.origin), 'output')
+    viewer = Viewer('bmvc_recognition_generation')
     dirname = os.path.join(output_path, 'images/')
     Path(dirname).mkdir(parents=True, exist_ok=True)
     # =========================
@@ -63,33 +66,26 @@ def main():
     latents = data['latents' if 'latents' in data else list(data.keys())[0]]
     print('Latents shape:', latents.shape)
     # =========================
-    # Save predictions
+    # Conditional generation on fixed latent units
     # =========================
-    pred = []
-    composite.process(latents, pred)
-    grid_size = 5
-    fig, axes = plt.subplots(grid_size, grid_size, figsize=(2.8*grid_size, 2.8*grid_size), facecolor='none')
-    axes = np.atleast_2d(axes)
-    for ax_row in axes:
-        for ax in np.atleast_1d(ax_row):
-            ax.axis('off')
-            ax.set_facecolor('none')
-    axes[0, 0].imshow(pred[0])
-    axes[0, 0].axis('off')
-    for idx in range(len(pred)-1):
-        row = 1+(idx//grid_size)
-        col = idx%grid_size
-        if row >= grid_size:
-            break
-        axes[row, col].imshow(pred[idx+1])
-        axes[row, col].axis('off')
-    plt.subplots_adjust(left=0, right=1, top=1, bottom=0, wspace=0, hspace=0)
+    ann, pred = GenericVideo(), GenericVideo()
+    img_ann = GenericImage(os.path.join(dirname, 'example.png'))
+    img_ann.id = input_data
+    img_ann.tile = np.array([0, 0, 64, 64])
+    ann.add_image(img_ann)
+    pred.add_image(copy.deepcopy(img_ann))
+    sr.process(None, pred, latents)
     if show_viewer:
-        plt.show()
+        for img_pred in pred.images:
+            viewer.set_image(img_pred)
+        composite.show(viewer, ann, pred)
+        viewer.show(0, as_video=False)
     if save_image:
-        filename = os.path.join(dirname, f'disdiff_{sr.database}_lat{sr.nlats}_dim{sr.ndims}_slots_{str(sr.slots)}.png')
-        plt.savefig(filename, dpi=180, bbox_inches='tight', pad_inches=0, transparent=True)
-    plt.close(fig)
+        for img_pred in pred.images:
+            viewer.set_image(img_pred)
+        composite.show(viewer, ann, pred)
+        viewer.save(dirname, as_video=False, format='tif')
+        composite.save(dirname, pred)
     print('End of bmvc26_recognition_generation')
 
 

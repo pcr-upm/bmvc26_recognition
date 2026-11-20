@@ -6,6 +6,8 @@ __email__ = 'jorge.elias@alumnos.upm.es'
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')))
+import cv2
+import copy
 import torch
 import torchinfo
 import importlib
@@ -17,13 +19,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
 from sklearn.metrics import accuracy_score
 from ground_truth.shapes3d import Dataset
-from pcr_framework.src.recognition import Recognition
+from pcr_framework.src.generation import Generation
 from src.evaluate import eval_func
 from ldm.modules.diffusionmodules.openaimodel_shift import UNetModel
 np.random.seed(42)
 
 
-class BMVC26Recognition(Recognition):
+class BMVC26Recognition(Generation):
     """
     On Structured Disentangled Representation and the Limits of Global Scores
     """
@@ -70,9 +72,18 @@ class BMVC26Recognition(Recognition):
         else:
             raise ValueError('Database is not implemented')
 
-    def train(self, anns_train, anns_valid):
-        (x_train, y_train) = anns_train
-        (x_valid, y_valid) = anns_valid
+    def train(self, anns_train, anns_valid, latents=None):
+        (latents, labels) = latents
+        if self.database == 'shapes3d':
+            x_train = latents[self.train_indices]
+            x_valid = latents[self.valid_indices]
+            y_train = labels[self.train_indices]
+            y_valid = labels[self.valid_indices]
+        elif self.database == 'celeba':
+            x_train = latents
+            x_valid = latents
+            y_train = labels
+            y_valid = labels
         results = {'metadata': {'database': self.database, 'latents_train': list(x_train.shape), 'num_slots': int(self.nlats), 'model': {'type': 'LinearSVC', 'random_state': 42, 'dual': False, 'max_iter': 5000, 'input_representation': 'single_slot_raw_vector', 'input_dim': int(self.ndims)}, 'factors': [{'factor_name': self.factor_names[j], 'factor_index': j, 'num_classes': int(len(np.unique(y_train[:, j])))} for j in range(len(self.factor_names))]}, 'results': {}}
         print('Train one SVM per factor/slot:')
         for factor_index, factor_name in enumerate(self.factor_names):
@@ -153,7 +164,7 @@ class BMVC26Recognition(Recognition):
         image_size = config.model.params.first_stage_config.params.ddconfig.resolution
         torchinfo.summary(self.model, input_size=[(1, latent_channels, latent_size, latent_size), (1, image_channels, image_size, image_size)], depth=3, device=self.device.type, col_names=['input_size', 'output_size', 'num_params', 'kernel_size'])
 
-    def process(self, ann, pred):
+    def process(self, ann, pred, latents=None):
         def denorm_img(x):
             x = x.detach().cpu()
             x = (x + 1.0) / 2.0
@@ -180,19 +191,21 @@ class BMVC26Recognition(Recognition):
             return torch.cat(outputs, dim=0)
 
         print('Process image')
-        ref_idx = 176977 
-        c_orig_split = torch.from_numpy(ann[ref_idx:ref_idx+1]).float().to(self.device)
+        img_pred = pred.images[0]
+        c_orig_split = torch.from_numpy(latents[img_pred.id]).float().to(self.device)
         c_orig_split = c_orig_split.reshape(1, self.model.model.diffusion_model.latent_unit, self.ndims)
         with get_ema_context(self.model):
-            x_ref = sample_in_batches(c_orig_split.reshape(1, -1))
-        pred.append(denorm_img(x_ref[0]))
-        n_generations = 20
-        available = [i for i in range(len(ann)) if i not in set({int(ref_idx)})]
+            image = sample_in_batches(c_orig_split.reshape(1, -1))
+        img = cv2.cvtColor((denorm_img(image[0])*255).astype(np.uint8), cv2.COLOR_RGB2BGR) 
+        cv2.imwrite(img_pred.filename, img)
+        # Generate conditioned samples
+        n_generations = 10
+        available = [i for i in range(len(latents)) if i not in set({int(img_pred.id)})]
         if not available:
             raise ValueError("No available dataset indices after applying forbidden set.")
         rng = np.random.default_rng(42)
         rand_indices = rng.choice(available, size=n_generations, replace=n_generations>len(available)).tolist()
-        random_splits = torch.from_numpy(ann[rand_indices]).float().to(self.device)
+        random_splits = torch.from_numpy(latents[rand_indices]).float().to(self.device)
         random_splits = random_splits.reshape(-1, self.model.model.diffusion_model.latent_unit, self.ndims)
         mixed = random_splits.clone()        
         for slot in self.slots:
@@ -203,4 +216,8 @@ class BMVC26Recognition(Recognition):
         with get_ema_context(self.model):
             x_gen = sample_in_batches(mixed_cond_flat)
         for idx in range(x_gen.shape[0]):
-            pred.append(denorm_img(x_gen[idx]))
+            img_seq = copy.deepcopy(img_pred)
+            img_seq.filename = os.path.join(os.path.dirname(img_pred.filename), f"{os.path.splitext(os.path.basename(img_pred.filename))[0]}_{idx}.png")
+            img = cv2.cvtColor((denorm_img(x_gen[idx])*255).astype(np.uint8), cv2.COLOR_RGB2BGR) 
+            cv2.imwrite(img_seq.filename, img)
+            pred.add_image(img_seq)
