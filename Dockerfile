@@ -8,6 +8,7 @@ RUN mkdir -p -m 0700 /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_ho
 RUN --mount=type=ssh git clone git@github.com:pcr-upm/bmvc26_recognition.git bmvc26_recognition
 ADD data /bmvc26_recognition/data
 ADD splits /bmvc26_recognition/splits
+ADD disdiff /bmvc26_recognition/disdiff
 
 # Copy the repository from the previous image
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
