@@ -13,24 +13,31 @@ The required dependencies are installed in the [`Dockerfile`](./Dockerfile#L36).
 
 #### Usage
 ```
-usage: bmvc26_recognition_latent.py [-h] [--show-viewer]
+usage: bmvc26_recognition_latent.py [-h] [--database DATABASE] [--gpu GPU] [--nlats NLATS] [--ndims NDIMS] [--slot SLOT]
 ```
 
-* Use the --show-viewer option to show results visually.
+* Use `--database` to select the database model. Supported models include `shapes3d` and `celeba`.
+* Use `--gpu` to set the GPU identifier (negative value indicates CPU mode).
+* Use `--nlats` to set the number of latent units (default: `10`).
+* Use `--ndims` to set the dimensionality of each latent unit (default: `32`).
+* Use `--slot` to specify a latent unit whose value is kept fixed during conditional generation. The option can be repeated (default: `--slot 1 --slot 2`).
 ```
-usage: Recognition --database DATABASE
+usage: bmvc26_recognition_generation.py [-h] [--input-data INPUT_DATA] [--database DATABASE] [--gpu GPU] [--nlats NLATS] [--ndims NDIMS] [--slot SLOT] [--show-viewer] [--save-image] 
 ```
 
-* Use the --database option to select the database model.
+* Use `--input-data` to select the input latent identifier (default: `176977`).
+* The `--database`, `--gpu`, `--nlats`, `--ndims`, and `--slot` options have the same meaning described above.
+* Use `--show-viewer` to show the results visually.
+* Use `--save-image` to save the processed images.
+
+Latent-unit probing example:
 ```
-usage: BMVC26Recognition [--nlats NLATS] [--ndims NDIMS]
+> python test/bmvc26_recognition_latent.py --database shapes3d --gpu 0 --nlats 6 --ndims 4
 ```
 
-* Use the --nlats option to set the number of latent units.
-
-* Use the --ndims option to set the dimensionality of the latent space.
+Conditional-generation example:
 ```
-> python test/bmvc26_recognition_latent.py --database shapes3d --nlats 6 --ndims 4
+> python test/bmvc26_recognition_generation.py --database shapes3d --gpu 0 --nlats 6 --ndims 4 --slot 1 --slot 2 --save-image
 ```
 
 #### Acknowledgements
